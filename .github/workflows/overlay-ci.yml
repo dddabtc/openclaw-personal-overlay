@@ -1,0 +1,50 @@
+name: overlay-ci
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '15 */6 * * *'
+
+jobs:
+  verify-overlay:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout overlay
+        uses: actions/checkout@v4
+
+      - name: Checkout upstream openclaw
+        uses: actions/checkout@v4
+        with:
+          repository: openclaw/openclaw
+          ref: main
+          path: upstream
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Apply overlay patch set (compat-gated)
+        run: |
+          cp -r upstream ./work
+          chmod +x scripts/apply-personal-patch.sh
+          # apply script expects target repo path
+          ./scripts/apply-personal-patch.sh ./work
+
+      - name: Run smoke tests
+        run: |
+          cd work
+          pnpm -s vitest run src/auto-reply/control-plane.test.ts src/auto-reply/reply/dispatch-from-config.test.ts
+
+      - name: Upload patch and compat artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: overlay-artifacts
+          path: |
+            compatibility.json
+            patches/**
