@@ -56,6 +56,11 @@ jobs:
         with:
           version: 9
 
+      - name: Configure git identity for patch apply
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
       - name: Apply overlay patch set (compat-gated)
         id: apply
         run: |
