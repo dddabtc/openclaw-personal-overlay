@@ -65,9 +65,10 @@ Pipeline should:
 
 ## ZMQ / exec-supervisor policy
 
-- **Default behavior:** ZMQ is excluded from the default overlay patch queue.
+- **Default behavior:** ZMQ is excluded from the default overlay patch queue (disabled by default).
 - **Reason:** keep baseline overlay lean/stable and avoid introducing an extra runtime dependency by default.
-- **Optional path:** ZMQ-related patches are preserved as an experimental opt-in layer (`experimental-zmq/`) and are not applied by `scripts/apply-personal-patch.sh`.
+- **Optional path:** ZMQ-related patches are preserved as an experimental opt-in layer (`patches/.../experimental-zmq/`) and are not applied by `scripts/apply-personal-patch.sh` (which only consumes `patchSetDir/*.patch`).
+- **Current limitation / TODO:** no first-class CLI flag yet for optional experimental groups; current opt-in is manual.
 
 ## Atlas Memory Compatibility
 

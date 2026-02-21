@@ -5,6 +5,15 @@
 
 **TL;DR**: This repo is a **Base + Overlay** layer for OpenClaw personal patches. You keep using official OpenClaw updates, then apply or rollback personal changes with one command. Every apply is guarded by `openclawVersion + commitSha`; if not compatible, it fails safe and does not modify your install.
 
+## What this patch actually changes (personal behavior layer)
+
+This overlay is focused on control-lane reliability and personal UX behavior:
+
+- **Command-word anti-blocking**: command words are handled in a separate control lane, so they do not compete with the main session lane.
+- **`/status` and `/stop` fast path with strict match**: these control commands are matched strictly and handled immediately.
+- **Tool-call default routing to sub-session**: tool calls default to sub-session routing unless explicitly forced to the main session.
+- **Status banner customization**: status output includes personal-build markers (for example, `PERSONAL BUILD` and byline customization).
+
 ---
 
 ## What this project is
@@ -114,23 +123,26 @@ This avoids false-positive compatibility when version strings are reused across 
 
 Default patch queue (non-experimental) currently focuses on:
 
-- command handling that avoids blocking behavior in control flow
-- status/stop fast-path improvements
-- sub-session/control-lane routing improvements for command handling
+- command-word anti-blocking (command words are not multiplexed on the same lane as normal main-session traffic)
+- `/status` + `/stop` strict-match fast-path control handling
+- tool-call default routing to sub-session (unless explicitly forced to main-session)
+- status banner personalization (`PERSONAL BUILD` / byline customization)
 
 These are represented by the top-level patches in:
 
 - `patches/083298ab9da9-to-91e0ffcfd080/*.patch`
 
-### ZMQ policy
+### Optional experimental ZMQ group (disabled by default)
 
-ZMQ/ZeroMQ exec-supervisor patches are **not** part of the default queue.
+ZMQ/ZeroMQ exec-supervisor patches exist in this repo as an **optional experimental group**, but they are **disabled by default**.
 
-- excluded by default policy (`compatibility.json`)
-- kept as optional experimental history under:
+- **Default apply path excludes ZMQ group**:
+  - policy: `compatibility.json` → `defaultOverlayPolicy.exclude`
+  - mechanism: `scripts/apply-personal-patch.sh` applies only `patchSetDir/*.patch` (top-level), so `experimental-zmq/` is not included.
+- **Optional group location**:
   - `patches/083298ab9da9-to-91e0ffcfd080/experimental-zmq/`
 
-So default apply/rollback paths remain deterministic without requiring ZMQ runtime changes.
+Current state: there is no first-class CLI switch to apply the experimental ZMQ group automatically; opt-in is manual today (**TODO**: add explicit optional-group flags/workflow if needed).
 
 ---
 
@@ -173,7 +185,7 @@ Use source mode if you actively develop/rebase patches.
 
 - `bin/openclaw-personal` — user CLI
 - `compatibility.json` — compatibility matrix + policy
-- `patches/` — patch sets (default + experimental-zmq)
+- `patches/` — patch sets (default top-level queue + optional experimental `experimental-zmq/` group)
 - `scripts/` — apply/rollback/build/validate helpers
 - `tests/` — CLI behavior tests
 - `docs/` — regular-user and developer guides

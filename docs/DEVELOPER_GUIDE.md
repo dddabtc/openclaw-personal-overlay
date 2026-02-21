@@ -46,4 +46,4 @@ CI fails if compatibility keys are malformed or duplicated.
 ## Experimental layers
 
 Default `bin/openclaw-personal apply --source ...` only applies `patchSetDir/*.patch` top-level patches.
-ZMQ/ZeroMQ patches are intentionally parked under `patches/.../experimental-zmq/` and are not part of the default queue.
+ZMQ/ZeroMQ patches are intentionally parked under `patches/.../experimental-zmq/` as an optional experimental group, and are disabled/excluded by default.

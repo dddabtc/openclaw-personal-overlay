@@ -27,7 +27,7 @@
         "memory_search": "expected",
         "memory_get": "expected"
       },
-      "notes": "Primary supported baseline; ZMQ optional experimental layer excluded from default patch queue"
+      "notes": "Primary supported baseline; ZMQ optional experimental layer is excluded/disabled by default"
     },
     {
       "id": "oc-legacy-sample",
@@ -46,6 +46,6 @@
     "optionalExperimentalPatchDirs": [
       "patches/083298ab9da9-to-91e0ffcfd080/experimental-zmq"
     ],
-    "note": "ZMQ layer is optional/experimental and excluded from default overlay patch queues."
+    "note": "ZMQ layer is optional/experimental and excluded (disabled) in the default overlay patch queue."
   }
 }
