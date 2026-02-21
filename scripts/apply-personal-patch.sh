@@ -43,6 +43,12 @@ fi
 
 git am "$patch_dir"/*.patch
 echo "[OK] patches applied"
+
+if [[ "${CI:-}" == "true" || "${OVERLAY_CI_ONLY_APPLY:-0}" == "1" ]]; then
+  echo "[OK] CI mode detected; skipping local build/install/restart"
+  exit 0
+fi
+
 pnpm -s build
 npm install -g . --prefix ~/.local
 systemctl --user restart openclaw-gateway.service || true
