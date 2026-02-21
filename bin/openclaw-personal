@@ -4,13 +4,31 @@ set -euo pipefail
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SELF_DIR/.." && pwd)"
 COMPAT_FILE="$ROOT_DIR/compatibility.json"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/openclaw-personal-overlay"
+INSTALL_STATE_FILE="$STATE_DIR/install-state.json"
+DEFAULT_RELEASE_REPO="dddabtc/openclaw-personal-overlay"
+
+E_USAGE=1
+E_NOT_FOUND=2
+E_INCOMPATIBLE=3
+E_DIRTY=4
+E_APPLY_FAILED=5
+E_BAD_ARTIFACT=6
+
+log() { echo "[openclaw-personal] $*"; }
+err() { echo "[openclaw-personal][ERR] $*" >&2; }
 
 usage() {
   cat <<'EOF'
 openclaw-personal commands:
-  apply [--source <openclaw-src-path>]   Apply overlay if compatible
-  rollback [--source <openclaw-src-path>] Roll back to compatible base
-  status [--source <openclaw-src-path>]   Show compatibility and current state
+  apply [--source <openclaw-src-path>] [--artifact <path|url>] [--release-repo <owner/repo>]
+  rollback [--source <openclaw-src-path>]
+  status [--source <openclaw-src-path>]
+
+Regular-user mode (no --source):
+  - detects local npm/openclaw installation
+  - verifies compatibility using local compatibility.json and artifact metadata
+  - applies dist-overlay artifact payload when compatible
 EOF
 }
 
@@ -24,13 +42,271 @@ current_commit() {
   git -C "$repo" rev-parse HEAD
 }
 
-compat_base() {
+find_npm_global_root() {
+  npm root -g 2>/dev/null || true
+}
+
+resolve_openclaw_install_root() {
+  local candidates=()
+  if [[ -n "${OPENCLAW_INSTALL_ROOT:-}" ]]; then
+    candidates+=("$OPENCLAW_INSTALL_ROOT")
+  fi
+
+  candidates+=("$HOME/.local/lib/node_modules/openclaw")
+
+  local npm_root
+  npm_root="$(find_npm_global_root)"
+  [[ -n "$npm_root" ]] && candidates+=("$npm_root/openclaw")
+
+  local npm_prefix
+  npm_prefix="$(npm prefix -g 2>/dev/null || true)"
+  [[ -n "$npm_prefix" ]] && candidates+=("$npm_prefix/lib/node_modules/openclaw")
+
+  candidates+=(
+    "/usr/local/lib/node_modules/openclaw"
+    "/usr/lib/node_modules/openclaw"
+  )
+
+  local oc_bin
+  oc_bin="$(command -v openclaw 2>/dev/null || true)"
+  if [[ -n "$oc_bin" ]]; then
+    local real_bin
+    real_bin="$(readlink -f "$oc_bin" 2>/dev/null || echo "$oc_bin")"
+    local maybe_root
+    maybe_root="$(cd "$(dirname "$real_bin")/.." 2>/dev/null && pwd || true)"
+    [[ -n "$maybe_root" ]] && candidates+=("$maybe_root/lib/node_modules/openclaw")
+    [[ -n "$maybe_root" ]] && candidates+=("$maybe_root/node_modules/openclaw")
+  fi
+
+  local c
+  for c in "${candidates[@]}"; do
+    if [[ -f "$c/package.json" ]]; then
+      echo "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+
+read_install_info_json() {
+  local install_root="$1"
+  python3 - <<PY
+import json, pathlib, re
+p = pathlib.Path("$install_root") / "package.json"
+d = json.loads(p.read_text(encoding="utf-8"))
+version = d.get("version", "unknown")
+commit = d.get("gitHead") or d.get("commitSha") or d.get("openclawCommit") or ""
+if not commit and isinstance(d.get("build"), dict):
+  commit = d["build"].get("commit", "")
+if not commit:
+  m = re.search(r"\+g?([0-9a-f]{7,40})$", version)
+  if m:
+    commit = m.group(1)
+out = {
+  "openclawVersion": version,
+  "commitSha": commit or "unknown",
+}
+print(json.dumps(out))
+PY
+}
+
+compat_match_json() {
+  local version="$1"
+  local commit="$2"
   python3 - <<PY
 import json
-with open("$COMPAT_FILE","r",encoding="utf-8") as f:
-    d=json.load(f)
-print(d["supported"][0]["upstreamBaseCommit"])
+with open("$COMPAT_FILE", "r", encoding="utf-8") as f:
+    data = json.load(f)
+for entry in data.get("supported", []):
+    if entry.get("openclawVersion") == "$version" and entry.get("commitSha") == "$commit":
+        print(json.dumps(entry))
+        raise SystemExit(0)
+print("")
 PY
+}
+
+ensure_state_dir() {
+  mkdir -p "$STATE_DIR/backups"
+}
+
+download_artifact_if_url() {
+  local artifact="$1"
+  if [[ "$artifact" =~ ^https?:// ]]; then
+    local out="$STATE_DIR/tmp-artifact-$(date +%s).tar.gz"
+    log "downloading artifact: $artifact"
+    curl -fsSL "$artifact" -o "$out"
+    echo "$out"
+  else
+    echo "$artifact"
+  fi
+}
+
+latest_release_artifact_url() {
+  local repo="$1"
+  local api="https://api.github.com/repos/${repo}/releases/latest"
+  curl -fsSL "$api" | python3 - <<'PY'
+import json,sys
+obj=json.load(sys.stdin)
+for a in obj.get("assets",[]):
+    if a.get("name",""").endswith("dist-overlay.tar.gz"):
+        print(a.get("browser_download_url",""))
+        break
+PY
+}
+
+parse_json_field() {
+  local file="$1"
+  local field="$2"
+  python3 - <<PY
+import json
+with open("$file", "r", encoding="utf-8") as f:
+    d=json.load(f)
+print(d$field)
+PY
+}
+
+regular_apply() {
+  local artifact="${1:-}"
+  local release_repo="${2:-$DEFAULT_RELEASE_REPO}"
+
+  local install_root
+  install_root="$(resolve_openclaw_install_root)" || {
+    err "openclaw npm installation not found"
+    exit $E_NOT_FOUND
+  }
+  log "detected install root: $install_root"
+
+  local info
+  info="$(read_install_info_json "$install_root")"
+  local version commit
+  version="$(echo "$info" | python3 -c 'import json,sys;print(json.load(sys.stdin)["openclawVersion"])')"
+  commit="$(echo "$info" | python3 -c 'import json,sys;print(json.load(sys.stdin)["commitSha"])')"
+  log "detected openclaw version=$version commit=$commit"
+
+  local match
+  match="$(compat_match_json "$version" "$commit")"
+  if [[ -z "$match" ]]; then
+    err "incompatible local openclaw build; no changes made"
+    err "required match key: openclawVersion + commitSha"
+    exit $E_INCOMPATIBLE
+  fi
+
+  if [[ -z "$artifact" ]]; then
+    artifact="$(latest_release_artifact_url "$release_repo")"
+    if [[ -z "$artifact" ]]; then
+      err "failed to discover latest dist-overlay artifact from GitHub releases"
+      exit $E_NOT_FOUND
+    fi
+  fi
+
+  artifact="$(download_artifact_if_url "$artifact")"
+  [[ -f "$artifact" ]] || { err "artifact not found: $artifact"; exit $E_NOT_FOUND; }
+
+  ensure_state_dir
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  tar -xzf "$artifact" -C "$tmpdir"
+
+  local overlay_dir="$tmpdir/dist-overlay"
+  [[ -d "$overlay_dir" ]] || { err "invalid artifact (dist-overlay missing)"; exit $E_BAD_ARTIFACT; }
+  [[ -f "$overlay_dir/metadata.json" ]] || { err "invalid artifact metadata.json missing"; exit $E_BAD_ARTIFACT; }
+
+  local m_ver m_commit overlay_version
+  m_ver="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["targetOpenclawVersion"])' "$overlay_dir/metadata.json")"
+  m_commit="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["targetCommitSha"])' "$overlay_dir/metadata.json")"
+  overlay_version="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["overlayVersion"])' "$overlay_dir/metadata.json")"
+
+  if [[ "$m_ver" != "$version" || "$m_commit" != "$commit" ]]; then
+    err "artifact incompatible with local install; no changes made"
+    err "local:   version=$version commit=$commit"
+    err "artifact version=$m_ver commit=$m_commit"
+    exit $E_INCOMPATIBLE
+  fi
+
+  if [[ -f "$overlay_dir/checksums.sha256" ]]; then
+    (cd "$overlay_dir" && sha256sum -c checksums.sha256)
+  fi
+
+  [[ -d "$overlay_dir/payload" ]] || { err "invalid artifact payload missing"; exit $E_BAD_ARTIFACT; }
+
+  local ts backup_dir
+  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+  backup_dir="$STATE_DIR/backups/$ts"
+  mkdir -p "$backup_dir"
+
+  local payload_files
+  payload_files="$(cd "$overlay_dir/payload" && find . -type f | sed 's#^\./##')"
+  while IFS= read -r rel; do
+    [[ -z "$rel" ]] && continue
+    mkdir -p "$backup_dir/$(dirname "$rel")"
+    if [[ -f "$install_root/$rel" ]]; then
+      cp -a "$install_root/$rel" "$backup_dir/$rel"
+    fi
+  done <<< "$payload_files"
+
+  rsync -a "$overlay_dir/payload/" "$install_root/"
+
+  cat > "$INSTALL_STATE_FILE" <<JSON
+{
+  "installedAt": "$ts",
+  "installRoot": "${install_root}",
+  "openclawVersion": "${version}",
+  "commitSha": "${commit}",
+  "overlayVersion": "${overlay_version}",
+  "backupDir": "${backup_dir}"
+}
+JSON
+
+  log "overlay applied successfully (overlayVersion=${overlay_version})"
+}
+
+regular_status() {
+  local install_root
+  install_root="$(resolve_openclaw_install_root 2>/dev/null || true)"
+  if [[ -z "$install_root" ]]; then
+    echo "install_detected=false"
+    exit 0
+  fi
+
+  local info version commit
+  info="$(read_install_info_json "$install_root")"
+  version="$(echo "$info" | python3 -c 'import json,sys;print(json.load(sys.stdin)["openclawVersion"])')"
+  commit="$(echo "$info" | python3 -c 'import json,sys;print(json.load(sys.stdin)["commitSha"])')"
+
+  echo "install_detected=true"
+  echo "install_root=$install_root"
+  echo "openclaw_version=$version"
+  echo "openclaw_commit=$commit"
+
+  local match
+  match="$(compat_match_json "$version" "$commit")"
+  if [[ -n "$match" ]]; then
+    echo "compatibility_match=true"
+    echo "compatibility_entry=$(echo "$match" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("id","n/a"))')"
+  else
+    echo "compatibility_match=false"
+  fi
+
+  if [[ -f "$INSTALL_STATE_FILE" ]]; then
+    echo "overlay_installed=true"
+    echo "overlay_version=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["overlayVersion"])' "$INSTALL_STATE_FILE")"
+    echo "overlay_backup_dir=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["backupDir"])' "$INSTALL_STATE_FILE")"
+  else
+    echo "overlay_installed=false"
+  fi
+}
+
+regular_rollback() {
+  [[ -f "$INSTALL_STATE_FILE" ]] || { err "no install state found for regular-user rollback"; exit $E_NOT_FOUND; }
+  local install_root backup_dir
+  install_root="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["installRoot"])' "$INSTALL_STATE_FILE")"
+  backup_dir="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["backupDir"])' "$INSTALL_STATE_FILE")"
+
+  [[ -d "$backup_dir" ]] || { err "backup directory missing: $backup_dir"; exit $E_NOT_FOUND; }
+
+  rsync -a "$backup_dir/" "$install_root/"
+  rm -f "$INSTALL_STATE_FILE"
+  log "rollback completed from backup: $backup_dir"
 }
 
 cmd="${1:-}"
@@ -38,30 +314,60 @@ shift || true
 
 case "$cmd" in
   apply)
-    src="$HOME/openclaw-src"
-    if [[ "${1:-}" == "--source" ]]; then src="$2"; fi
-    "$ROOT_DIR/scripts/apply-personal-patch.sh" "$(repo_path "$src")"
+    src=""
+    artifact=""
+    release_repo="$DEFAULT_RELEASE_REPO"
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --source) src="$2"; shift 2 ;;
+        --artifact) artifact="$2"; shift 2 ;;
+        --release-repo) release_repo="$2"; shift 2 ;;
+        *) err "unknown arg: $1"; exit $E_USAGE ;;
+      esac
+    done
+    if [[ -n "$src" ]]; then
+      "$ROOT_DIR/scripts/apply-personal-patch.sh" "$(repo_path "$src")"
+    else
+      regular_apply "$artifact" "$release_repo"
+    fi
     ;;
   rollback)
-    src="$HOME/openclaw-src"
-    if [[ "${1:-}" == "--source" ]]; then src="$2"; fi
-    "$ROOT_DIR/scripts/rollback-personal-patch.sh" "$(repo_path "$src")"
+    src=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --source) src="$2"; shift 2 ;;
+        *) err "unknown arg: $1"; exit $E_USAGE ;;
+      esac
+    done
+    if [[ -n "$src" ]]; then
+      "$ROOT_DIR/scripts/rollback-personal-patch.sh" "$(repo_path "$src")"
+    else
+      regular_rollback
+    fi
     ;;
   status)
-    src="$HOME/openclaw-src"
-    if [[ "${1:-}" == "--source" ]]; then src="$2"; fi
-    echo "overlay_repo=$ROOT_DIR"
-    echo "target_repo=$src"
-    echo "compat_base=$(compat_base)"
-    if [[ -d "$src/.git" ]]; then
-      echo "target_commit=$(current_commit "$src")"
-      echo "target_branch=$(git -C "$src" rev-parse --abbrev-ref HEAD)"
+    src=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --source) src="$2"; shift 2 ;;
+        *) err "unknown arg: $1"; exit $E_USAGE ;;
+      esac
+    done
+    if [[ -n "$src" ]]; then
+      echo "overlay_repo=$ROOT_DIR"
+      echo "target_repo=$src"
+      if [[ -d "$src/.git" ]]; then
+        echo "target_commit=$(current_commit "$src")"
+        echo "target_branch=$(git -C "$src" rev-parse --abbrev-ref HEAD)"
+      else
+        echo "target_repo_missing=true"
+      fi
     else
-      echo "target_repo_missing=true"
+      regular_status
     fi
     ;;
   *)
     usage
-    exit 1
+    exit $E_USAGE
     ;;
 esac

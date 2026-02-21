@@ -5,9 +5,18 @@ OVERLAY_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 COMPAT="$OVERLAY_DIR/compatibility.json"
 base=$(python3 - <<PY
 import json
-print(json.load(open('$COMPAT'))['supported'][0]['upstreamBaseCommit'])
+with open('$COMPAT','r',encoding='utf-8') as f:
+    d=json.load(f)
+for e in d.get('supported',[]):
+    if e.get('upstreamBaseCommit'):
+      print(e['upstreamBaseCommit'])
+      break
 PY
 )
+if [[ -z "$base" ]]; then
+  echo "[ERR] no upstreamBaseCommit entries in compatibility matrix" >&2
+  exit 2
+fi
 cd "$TARGET_REPO"
 git am --abort >/dev/null 2>&1 || true
 git reset --hard "$base"
