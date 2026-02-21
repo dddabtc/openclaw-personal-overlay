@@ -1,0 +1,21 @@
+From fd5a0cb99211cca3e2d9c44c43a37b939fe4d1a3 Mon Sep 17 00:00:00 2001
+From: zhaod <zhaod@local>
+Date: Fri, 20 Feb 2026 04:28:13 -0400
+Subject: [PATCH 08/20] config: allow tools.exec.mode in runtime zod schema
+
+
+diff --git a/src/config/zod-schema.agent-runtime.ts b/src/config/zod-schema.agent-runtime.ts
+index 78b61b9a078f2e84f3b09bfa0d2e328fff7cb424..1227b25d7ea8cbc944c2af0ae09bae44c0c852c2 100644
+--- a/src/config/zod-schema.agent-runtime.ts
++++ b/src/config/zod-schema.agent-runtime.ts
+@@ -326,6 +326,7 @@ const ToolExecApplyPatchSchema = z
+   .optional();
+ 
+ const ToolExecBaseShape = {
++  mode: z.enum(["origin", "zmq"]).optional(),
+   host: z.enum(["sandbox", "gateway", "node"]).optional(),
+   security: z.enum(["deny", "allowlist", "full"]).optional(),
+   ask: z.enum(["off", "on-miss", "always"]).optional(),
+-- 
+2.25.1
+

@@ -1,0 +1,133 @@
+From 58e70bf4b80b678a007ab3ad0b7bd540ecfe011d Mon Sep 17 00:00:00 2001
+From: zhaod <zhaod@local>
+Date: Fri, 20 Feb 2026 05:28:42 -0400
+Subject: [PATCH 09/20] docs(exec): clarify origin/zmq routing and zmq failure
+ behavior
+
+
+diff --git a/docs/exec-supervisor.md b/docs/exec-supervisor.md
+index 91c7bd6ef5b4fa25ed041d6b0c9244498a65b11d..398e1a15758508dad9ccb219595e23bb862767c1 100644
+--- a/docs/exec-supervisor.md
++++ b/docs/exec-supervisor.md
+@@ -147,6 +147,21 @@ tools:
+     mode: origin # or "zmq"
+ ```
+ 
++`tools.exec.mode` accepts only two values:
++
++- `origin`: route exec jobs to the in-process ProcessSupervisor
++- `zmq`: route exec jobs to the external exec-supervisor client/server
++
++### runExecProcess routing behavior
++
++At runtime, `runExecProcess` follows the active exec mode:
++
++- `origin` mode: spawn/poll/kill are handled in-process by the Gateway supervisor
++- `zmq` mode: spawn/poll/kill are forwarded to the ZMQ supervisor over control/event sockets
++
++When `zmq` is selected and the supervisor is unavailable/unhealthy, exec returns an explicit error.
++There is no silent fallback to `origin` for that request.
++
+ ### Supervisor Configuration Options
+ 
+ ```typescript
+@@ -194,6 +209,7 @@ Switching modes:
+ - Only affects new exec tasks; running tasks continue in their original mode
+ - Switching to `zmq` requires a healthy supervisor (health check is performed)
+ - Switching to `origin` always succeeds
++- If `zmq` is requested but supervisor health checks fail, mode stays `origin` and an explicit error is returned (no silent fallback)
+ 
+ ## Running the Supervisor
+ 
+@@ -209,6 +225,37 @@ Options:
+   --ring-buffer=<n>   Ring buffer size in bytes (default: 2097152)
+ ```
+ 
++## Runtime verification (origin + zmq)
++
++1. Check mode + health:
++
++```bash
++/exec-mode
++```
++
++2. Verify origin execution path:
++
++```bash
++/exec-mode origin
++# run a small exec command and confirm success
++```
++
++3. Verify zmq execution path:
++
++```bash
++/exec-mode zmq
++# run a small exec command and confirm success
++```
++
++4. Verify explicit zmq failure behavior:
++
++```bash
++# stop exec-supervisor while mode is zmq
++# run exec again
++# expect explicit supervisor unavailable/unhealthy error
++# no automatic fallback to origin
++```
++
+ ## Features
+ 
+ ### Ring Buffer
+diff --git a/docs/tools/exec.md b/docs/tools/exec.md
+index 73603d5c019b0a7cf110545f4b41b228aefee9ac..902e567a3a67d76f17595a2b4e90ab643fba33e6 100644
+--- a/docs/tools/exec.md
++++ b/docs/tools/exec.md
+@@ -83,11 +83,43 @@ Use `/exec-mode` to view or change the mode at runtime:
+ /exec-mode zmq       # Switch to ZMQ supervisor mode
+ ```
+ 
++### Quick runtime verification
++
++1. Confirm current mode + supervisor health:
++
++   ```
++   /exec-mode
++   ```
++
++2. Verify `origin` path:
++
++   ```
++   /exec-mode origin
++   exec: echo origin-ok
++   ```
++
++3. Verify `zmq` path:
++
++   ```
++   /exec-mode zmq
++   exec: echo zmq-ok
++   ```
++
++4. Failure behavior check (supervisor down while in `zmq`):
++   - stop `exec-supervisor`
++   - run any `exec` command
++   - expect an explicit supervisor/unhealthy error (no automatic fallback to `origin`)
++
+ Notes:
+ 
+-- Switching only affects new exec tasks; running tasks continue in their original mode
+-- Switching to `zmq` requires a healthy supervisor (health check is performed)
+-- See [Exec Supervisor](/exec-supervisor) for architecture details and running the supervisor
++- `tools.exec.mode` only accepts `origin` or `zmq`.
++- Switching only affects new exec tasks; running tasks continue in their original mode.
++- `runExecProcess` routes new runs based on the active mode:
++  - `origin`: execute via the in-process ProcessSupervisor
++  - `zmq`: execute via the external exec-supervisor client (REQ/REP + PUB/SUB)
++- Switching to `zmq` requires a healthy supervisor (health check is performed).
++- If `zmq` mode is selected but the supervisor is unavailable/unhealthy, exec returns an explicit error (no silent fallback to `origin`).
++- See [Exec Supervisor](/exec-supervisor) for architecture details and running the supervisor.
+ 
+ ## Config
+ 
+-- 
+2.25.1
+

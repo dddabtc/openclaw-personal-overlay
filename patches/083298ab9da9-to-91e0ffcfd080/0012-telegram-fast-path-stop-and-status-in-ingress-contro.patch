@@ -1,0 +1,194 @@
+From 9dceae2e7c54add1d5a26c05aacacb7092bc0801 Mon Sep 17 00:00:00 2001
+From: zhaod <zhaod@local>
+Date: Fri, 20 Feb 2026 13:32:40 -0400
+Subject: [PATCH 12/20] telegram: fast-path /stop and /status in ingress
+ control lane
+
+
+diff --git a/src/telegram/bot-handlers.ts b/src/telegram/bot-handlers.ts
+index 1e51e0dbca539541cb16bd895e22b67006c04c31..bca8d0d56b2182827fc4b25d31fae4e786f0f78a 100644
+--- a/src/telegram/bot-handlers.ts
++++ b/src/telegram/bot-handlers.ts
+@@ -1,10 +1,12 @@
+ import type { Message, ReactionTypeEmoji } from "@grammyjs/types";
+-import { resolveAgentDir, resolveDefaultAgentId } from "../agents/agent-scope.js";
++import { resolveAgentDir, resolveDefaultAgentId, resolveSessionAgentId } from "../agents/agent-scope.js";
+ import { hasControlCommand } from "../auto-reply/command-detection.js";
++import { normalizeCommandBody } from "../auto-reply/commands-registry.js";
+ import {
+   createInboundDebouncer,
+   resolveInboundDebounceMs,
+ } from "../auto-reply/inbound-debounce.js";
++import { formatAbortReplyText, stopSubagentsForRequester } from "../auto-reply/reply/abort.js";
+ import { buildCommandsPaginationKeyboard } from "../auto-reply/reply/commands-info.js";
+ import {
+   buildModelsProviderData,
+@@ -13,6 +15,7 @@ import {
+ import { resolveStoredModelOverride } from "../auto-reply/reply/model-selection.js";
+ import { listSkillCommandsForAgents } from "../auto-reply/skill-commands.js";
+ import { buildCommandsMessagePaginated } from "../auto-reply/status.js";
++import { clearSessionQueues } from "../auto-reply/reply/queue.js";
+ import { resolveChannelConfigWrites } from "../channels/plugins/config-writes.js";
+ import { loadConfig } from "../config/config.js";
+ import { writeConfigFile } from "../config/io.js";
+@@ -21,6 +24,9 @@ import type { TelegramGroupConfig, TelegramTopicConfig } from "../config/types.j
+ import { danger, logVerbose, warn } from "../globals.js";
+ import { enqueueSystemEvent } from "../infra/system-events.js";
+ import { readChannelAllowFromStore } from "../pairing/pairing-store.js";
++import { abortEmbeddedPiRun } from "../agents/pi-embedded.js";
++import { createSessionStatusTool } from "../agents/tools/session-status-tool.js";
++import type { MsgContext } from "../auto-reply/templating.js";
+ import { resolveAgentRoute } from "../routing/resolve-route.js";
+ import { resolveThreadSessionKeys } from "../routing/session-key.js";
+ import { withTelegramApiErrorLogging } from "./api-logging.js";
+@@ -193,6 +199,8 @@ export const registerTelegramHandlers = ({
+     resolvedThreadId?: number;
+   }): {
+     agentId: string;
++    sessionKey: string;
++    storePath: string;
+     sessionEntry: ReturnType<typeof loadSessionStore>[string];
+     model?: string;
+   } => {
+@@ -238,6 +246,8 @@ export const registerTelegramHandlers = ({
+     if (storedOverride) {
+       return {
+         agentId: route.agentId,
++        sessionKey,
++        storePath,
+         sessionEntry: entry,
+         model: storedOverride.provider
+           ? `${storedOverride.provider}/${storedOverride.model}`
+@@ -249,6 +259,8 @@ export const registerTelegramHandlers = ({
+     if (provider && model) {
+       return {
+         agentId: route.agentId,
++        sessionKey,
++        storePath,
+         sessionEntry: entry,
+         model: `${provider}/${model}`,
+       };
+@@ -256,6 +268,8 @@ export const registerTelegramHandlers = ({
+     const modelCfg = cfg.agents?.defaults?.model;
+     return {
+       agentId: route.agentId,
++      sessionKey,
++      storePath,
+       sessionEntry: entry,
+       model: typeof modelCfg === "string" ? modelCfg : modelCfg?.primary,
+     };
+@@ -563,6 +577,111 @@ export const registerTelegramHandlers = ({
+       oversizeLogMessage,
+     } = params;
+ 
++    const inboundText = (msg.text ?? msg.caption ?? "").trim();
++    const normalizedControlCommand = normalizeCommandBody(inboundText, {
++      botUsername: ctx.me?.username,
++    })
++      .trim()
++      .toLowerCase();
++    if (normalizedControlCommand === "/stop" || normalizedControlCommand === "/status") {
++      logger.info(
++        {
++          marker: "command_ingress",
++          command: normalizedControlCommand,
++          chatId,
++          messageId: msg.message_id,
++        },
++        "command_ingress",
++      );
++      const isGroup = msg.chat.type === "group" || msg.chat.type === "supergroup";
++      const isForum = msg.chat.is_forum === true;
++      const sessionState = resolveTelegramSessionState({
++        chatId,
++        isGroup,
++        isForum,
++        messageThreadId: msg.message_thread_id,
++        resolvedThreadId,
++      });
++      logger.info(
++        {
++          marker: "control_lane_dequeue",
++          command: normalizedControlCommand,
++          sessionKey: sessionState.sessionKey,
++          agentId: sessionState.agentId,
++        },
++        "control_lane_dequeue",
++      );
++      const replyParams = {
++        reply_to_message_id: msg.message_id,
++        ...(msg.message_thread_id != null ? { message_thread_id: msg.message_thread_id } : {}),
++      };
++      if (normalizedControlCommand === "/stop") {
++        const sessionId = sessionState.sessionEntry?.sessionId;
++        const aborted = sessionId ? abortEmbeddedPiRun(sessionId) : false;
++        const cleared = clearSessionQueues([sessionState.sessionKey, sessionId]);
++        const { stopped } = stopSubagentsForRequester({
++          cfg,
++          requesterSessionKey: sessionState.sessionKey,
++        });
++        const agentId = resolveSessionAgentId({
++          sessionKey: sessionState.sessionKey,
++          config: cfg,
++        });
++        await withTelegramApiErrorLogging({
++          operation: "sendMessage",
++          runtime,
++          fn: () => bot.api.sendMessage(chatId, formatAbortReplyText(stopped), replyParams),
++        }).catch(() => {});
++        logger.info(
++          {
++            marker: "abort_dispatched",
++            command: normalizedControlCommand,
++            sessionKey: sessionState.sessionKey,
++            agentId,
++            sessionId,
++            aborted,
++            laneCleared: cleared.laneCleared,
++            followupCleared: cleared.followupCleared,
++            stoppedSubagents: stopped,
++          },
++          "abort_dispatched",
++        );
++        return;
++      }
++
++      const statusTool = createSessionStatusTool({
++        agentSessionKey: sessionState.sessionKey,
++        config: cfg,
++      });
++      let statusText = "⚠️ Status unavailable.";
++      try {
++        const statusResult = await statusTool.execute("telegram-local-status", {
++          sessionKey: sessionState.sessionKey,
++        });
++        const textPart = statusResult?.content?.find((part) => part.type === "text");
++        if (textPart?.text?.trim()) {
++          statusText = textPart.text;
++        }
++      } catch (statusErr) {
++        statusText = `⚠️ Status unavailable: ${String(statusErr)}`;
++      }
++      await withTelegramApiErrorLogging({
++        operation: "sendMessage",
++        runtime,
++        fn: () => bot.api.sendMessage(chatId, statusText, replyParams),
++      }).catch(() => {});
++      logger.info(
++        {
++          marker: "status_replied",
++          command: normalizedControlCommand,
++          sessionKey: sessionState.sessionKey,
++          textLength: statusText.length,
++        },
++        "status_replied",
++      );
++      return;
++    }
++
+     // Text fragment handling - Telegram splits long pastes into multiple inbound messages (~4096 chars).
+     // We buffer “near-limit” messages and append immediately-following parts.
+     const text = typeof msg.text === "string" ? msg.text : undefined;
+-- 
+2.25.1
+

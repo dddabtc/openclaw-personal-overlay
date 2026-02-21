@@ -1,0 +1,60 @@
+From 2274ca772fb133b0bf39990471e1022b6b637690 Mon Sep 17 00:00:00 2001
+From: zhaod <zhaod@local>
+Date: Fri, 20 Feb 2026 12:57:41 -0400
+Subject: [PATCH 10/20] telegram: route /status and /stop to control sequential
+ lane
+
+
+diff --git a/src/telegram/bot.create-telegram-bot.test.ts b/src/telegram/bot.create-telegram-bot.test.ts
+index f2eff7d13078a39b98b8c18a5166392262d8cc09..6442f47ae3223a498b1a3f50e8c6f0ca204bc7ed 100644
+--- a/src/telegram/bot.create-telegram-bot.test.ts
++++ b/src/telegram/bot.create-telegram-bot.test.ts
+@@ -1,7 +1,7 @@
+ import fs from "node:fs";
+ import os from "node:os";
+ import path from "node:path";
+-import type { Chat, Message } from "@grammyjs/types";
++import type { Chat, Message, UserFromGetMe } from "@grammyjs/types";
+ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+ import { escapeRegExp, formatEnvelopeTimestamp } from "../../test/helpers/envelope-timestamp.js";
+ import {
+@@ -172,7 +172,13 @@ describe("createTelegramBot", () => {
+       getTelegramSequentialKey({
+         message: mockMessage({ chat: mockChat({ id: 123 }), text: "/status" }),
+       }),
+-    ).toBe("telegram:123");
++    ).toBe("telegram:123:control");
++    expect(
++      getTelegramSequentialKey({
++        me: { username: "openclaw" } as UserFromGetMe,
++        message: mockMessage({ chat: mockChat({ id: 123 }), text: "/status@openclaw" }),
++      }),
++    ).toBe("telegram:123:control");
+     expect(
+       getTelegramSequentialKey({
+         message: mockMessage({ chat: mockChat({ id: 123 }), text: "stop" }),
+diff --git a/src/telegram/bot.ts b/src/telegram/bot.ts
+index 9bca2dfc6c44d667281270636d597f3b915bbcb0..d557d3ccb388498aca07cb1951d96611b9aaa34f 100644
+--- a/src/telegram/bot.ts
++++ b/src/telegram/bot.ts
+@@ -94,10 +94,16 @@ export function getTelegramSequentialKey(ctx: {
+   const chatId = msg?.chat?.id ?? ctx.chat?.id;
+   const rawText = msg?.text ?? msg?.caption;
+   const botUsername = ctx.me?.username;
+-  if (isAbortRequestText(rawText, botUsername ? { botUsername } : undefined)) {
++  const normalizedText = (rawText ?? "").trim().toLowerCase();
++  const isStatusCommand =
++    normalizedText === "/status" ||
++    (botUsername ? normalizedText === `/status@${botUsername.toLowerCase()}` : false);
++  const isStopCommand = isAbortRequestText(rawText, botUsername ? { botUsername } : undefined);
++  if (isStopCommand || isStatusCommand) {
+     if (typeof chatId === "number") {
+       return `telegram:${chatId}:control`;
+     }
++    logVerbose("telegram: control command received without numeric chat id; using fallback control lane");
+     return "telegram:control";
+   }
+   const isGroup = msg?.chat?.type === "group" || msg?.chat?.type === "supergroup";
+-- 
+2.25.1
+
