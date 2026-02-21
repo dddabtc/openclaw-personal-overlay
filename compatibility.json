@@ -27,7 +27,7 @@
         "memory_search": "expected",
         "memory_get": "expected"
       },
-      "notes": "Primary supported baseline"
+      "notes": "Primary supported baseline; ZMQ optional experimental layer excluded from default patch queue"
     },
     {
       "id": "oc-legacy-sample",
@@ -36,5 +36,16 @@
       "status": "deprecated",
       "notes": "Placeholder for matrix shape (deprecated/no artifact)"
     }
-  ]
+  ],
+  "defaultOverlayPolicy": {
+    "exclude": [
+      "zmq",
+      "zeromq",
+      "exec-supervisor-zmq"
+    ],
+    "optionalExperimentalPatchDirs": [
+      "patches/083298ab9da9-to-91e0ffcfd080/experimental-zmq"
+    ],
+    "note": "ZMQ layer is optional/experimental and excluded from default overlay patch queues."
+  }
 }

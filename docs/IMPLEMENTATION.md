@@ -62,6 +62,13 @@ Pipeline should:
    - `sha256` checksum
 5. Update compatibility manifest
 
+
+## ZMQ / exec-supervisor policy
+
+- **Default behavior:** ZMQ is excluded from the default overlay patch queue.
+- **Reason:** keep baseline overlay lean/stable and avoid introducing an extra runtime dependency by default.
+- **Optional path:** ZMQ-related patches are preserved as an experimental opt-in layer (`experimental-zmq/`) and are not applied by `scripts/apply-personal-patch.sh`.
+
 ## Atlas Memory Compatibility
 
 Atlas integration is treated as an external compatibility surface.

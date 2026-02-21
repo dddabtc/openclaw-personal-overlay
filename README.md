@@ -37,6 +37,17 @@ bin/openclaw-personal apply --source ~/openclaw-src
 bin/openclaw-personal rollback --source ~/openclaw-src
 ```
 
+
+## Overlay policy: ZMQ is optional (not default)
+
+Default overlay patch sets do **not** include ZMQ/ZeroMQ exec-supervisor patches.
+
+- Default `patches/*` queue = stable personal overlay only
+- ZMQ/`exec-supervisor-zmq` changes are kept as an **optional experimental layer** under:
+  - `patches/083298ab9da9-to-91e0ffcfd080/experimental-zmq/`
+
+This keeps regular apply/rollback flows deterministic while still preserving the experimental ZMQ patch history for opt-in testing.
+
 ## Docs
 
 - `docs/REGULAR_USER_GUIDE.md`
