@@ -33,7 +33,6 @@ jobs:
         run: |
           cp -r upstream ./work
           chmod +x scripts/apply-personal-patch.sh
-          # apply script expects target repo path
           ./scripts/apply-personal-patch.sh ./work
 
       - name: Run smoke tests
@@ -41,10 +40,14 @@ jobs:
           cd work
           pnpm -s vitest run src/auto-reply/control-plane.test.ts src/auto-reply/reply/dispatch-from-config.test.ts
 
-      - name: Upload patch and compat artifacts
+      - name: Pack patch bundle + checksum
+        run: |
+          mkdir -p out
+          tar -czf out/openclaw-personal-overlay-patches.tar.gz patches compatibility.json scripts README.md
+          sha256sum out/openclaw-personal-overlay-patches.tar.gz > out/openclaw-personal-overlay-patches.tar.gz.sha256
+
+      - name: Upload overlay artifacts
         uses: actions/upload-artifact@v4
         with:
           name: overlay-artifacts
-          path: |
-            compatibility.json
-            patches/**
+          path: out/*

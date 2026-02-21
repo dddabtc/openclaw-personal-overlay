@@ -1,13 +1,29 @@
 {
-  "schema": 1,
+  "schema": 2,
   "project": "openclaw-personal-overlay",
   "generatedAt": "2026-02-21T04:05:08Z",
+  "channels": {
+    "source": {
+      "enabled": true,
+      "applyScript": "scripts/apply-personal-patch.sh",
+      "rollbackScript": "scripts/rollback-personal-patch.sh"
+    },
+    "binary": {
+      "enabled": false,
+      "notes": "Planned: prebuilt overlay packages for npm/binary users"
+    }
+  },
   "supported": [
     {
       "openclawVersion": "2026.2.20",
+      "commitSha": "083298ab9da98238c6fb1e008c8994a565427f2a",
       "upstreamBaseCommit": "083298ab9da98238c6fb1e008c8994a565427f2a",
       "overlayHeadCommit": "91e0ffcfd080470aa540bcac078107401ff1da53",
       "patchSetDir": "patches/083298ab9da9-to-91e0ffcfd080",
+      "atlasCompat": {
+        "memory_search": "expected",
+        "memory_get": "expected"
+      },
       "notes": "Personal overlay baseline from dddabtc/openclaw personal"
     }
   ]

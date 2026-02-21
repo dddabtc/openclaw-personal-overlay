@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SELF_DIR/.." && pwd)"
+COMPAT_FILE="$ROOT_DIR/compatibility.json"
+
+usage() {
+  cat <<'EOF'
+openclaw-personal commands:
+  apply [--source <openclaw-src-path>]   Apply overlay if compatible
+  rollback [--source <openclaw-src-path>] Roll back to compatible base
+  status [--source <openclaw-src-path>]   Show compatibility and current state
+EOF
+}
+
+repo_path() {
+  local p="${1:-$HOME/openclaw-src}"
+  echo "$p"
+}
+
+current_commit() {
+  local repo="$1"
+  git -C "$repo" rev-parse HEAD
+}
+
+compat_base() {
+  python3 - <<PY
+import json
+with open("$COMPAT_FILE","r",encoding="utf-8") as f:
+    d=json.load(f)
+print(d["supported"][0]["upstreamBaseCommit"])
+PY
+}
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  apply)
+    src="$HOME/openclaw-src"
+    if [[ "${1:-}" == "--source" ]]; then src="$2"; fi
+    "$ROOT_DIR/scripts/apply-personal-patch.sh" "$(repo_path "$src")"
+    ;;
+  rollback)
+    src="$HOME/openclaw-src"
+    if [[ "${1:-}" == "--source" ]]; then src="$2"; fi
+    "$ROOT_DIR/scripts/rollback-personal-patch.sh" "$(repo_path "$src")"
+    ;;
+  status)
+    src="$HOME/openclaw-src"
+    if [[ "${1:-}" == "--source" ]]; then src="$2"; fi
+    echo "overlay_repo=$ROOT_DIR"
+    echo "target_repo=$src"
+    echo "compat_base=$(compat_base)"
+    if [[ -d "$src/.git" ]]; then
+      echo "target_commit=$(current_commit "$src")"
+      echo "target_branch=$(git -C "$src" rev-parse --abbrev-ref HEAD)"
+    else
+      echo "target_repo_missing=true"
+    fi
+    ;;
+  *)
+    usage
+    exit 1
+    ;;
+esac
