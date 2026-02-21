@@ -42,7 +42,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: openclaw/openclaw
-          ref: main
+          ref: 083298ab9da98238c6fb1e008c8994a565427f2a
           path: upstream
           fetch-depth: 0
 
