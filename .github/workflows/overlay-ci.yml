@@ -60,6 +60,8 @@ jobs:
         id: apply
         run: |
           cp -r upstream ./work
+          git -C ./work config user.name "github-actions[bot]"
+          git -C ./work config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           chmod +x scripts/apply-personal-patch.sh
           ./scripts/apply-personal-patch.sh ./work
 
