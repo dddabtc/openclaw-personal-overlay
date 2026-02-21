@@ -74,7 +74,7 @@ jobs:
         if: success()
         run: |
           cd work
-          pnpm install --frozen-lockfile
+          pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Run smoke tests
         if: success()
