@@ -373,6 +373,44 @@ regular_rollback() {
 
   [[ -d "$backup_dir" ]] || { err "backup directory missing: $backup_dir"; exit $E_NOT_FOUND; }
 
+  # Verify backup integrity before attempting restore.
+  python3 - "$INSTALL_STATE_FILE" "$backup_dir" <<'PY' || { err "backup integrity check failed; rollback aborted"; exit $E_NOT_FOUND; }
+import json, pathlib, sys
+
+state_file = sys.argv[1]
+backup_dir = pathlib.Path(sys.argv[2])
+
+# Verify required fields are present in state.
+try:
+    state = json.load(open(state_file, "r", encoding="utf-8"))
+except (json.JSONDecodeError, OSError) as exc:
+    print(f"[ERR] could not parse install state: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+required_fields = ["installRoot", "backupDir", "payloadFiles", "overlayVersion"]
+missing = [k for k in required_fields if k not in state]
+if missing:
+    print(f"[ERR] install state missing required fields: {missing}", file=sys.stderr)
+    sys.exit(1)
+
+# Confirm the backup dir recorded in state matches the one we resolved.
+if str(backup_dir.resolve()) != str(pathlib.Path(state["backupDir"]).resolve()):
+    print(
+        f"[ERR] backup dir mismatch: state says {state['backupDir']!r}, "
+        f"resolved {str(backup_dir)!r}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+# Ensure backup dir is not empty.
+contents = list(backup_dir.iterdir())
+if not contents:
+    print(f"[ERR] backup directory is empty: {backup_dir}", file=sys.stderr)
+    sys.exit(1)
+
+print(f"[OK] backup integrity verified ({len(contents)} top-level entries)", file=sys.stderr)
+PY
+
   # Remove overlaid files first (including files newly added by overlay), then restore backup.
   python3 - "$INSTALL_STATE_FILE" "$install_root" <<'PY'
 import json, os, pathlib, sys
