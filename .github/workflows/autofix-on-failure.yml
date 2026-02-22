@@ -1,0 +1,86 @@
+name: autofix-on-failure
+
+"on":
+  workflow_run:
+    workflows:
+      - auto-compat
+      - overlay-ci
+      - support-release-rollover
+    types:
+      - completed
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  dispatch-copilot-fix:
+    if: github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gather failed run context
+        id: ctx
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          REPO='${{ github.repository }}'
+          RUN_ID='${{ github.event.workflow_run.id }}'
+          RUN_URL='${{ github.event.workflow_run.html_url }}'
+          WORKFLOW='${{ github.event.workflow_run.name }}'
+          BRANCH='${{ github.event.workflow_run.head_branch }}'
+
+          FAILED_JOBS=$(gh api repos/$REPO/actions/runs/$RUN_ID/jobs --jq '.jobs[] | select(.conclusion=="failure") | .name' | paste -sd ', ' -)
+          if [[ -z "${FAILED_JOBS:-}" ]]; then
+            FAILED_JOBS="(no failed job name available)"
+          fi
+
+          echo "repo=$REPO" >> "$GITHUB_OUTPUT"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "run_url=$RUN_URL" >> "$GITHUB_OUTPUT"
+          echo "workflow=$WORKFLOW" >> "$GITHUB_OUTPUT"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "failed_jobs=$FAILED_JOBS" >> "$GITHUB_OUTPUT"
+
+      - name: Open autofix issue (for Copilot coding agent)
+        id: issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TITLE="[autofix] ${{ steps.ctx.outputs.workflow }} failed on ${{ steps.ctx.outputs.branch }}"
+          BODY=$(cat <<EOF
+An automated workflow failed and needs auto-repair.
+
+- Workflow: `${{ steps.ctx.outputs.workflow }}`
+- Branch: `${{ steps.ctx.outputs.branch }}`
+- Failed jobs: `${{ steps.ctx.outputs.failed_jobs }}`
+- Run: ${{ steps.ctx.outputs.run_url }}
+
+Task for GitHub Copilot coding agent:
+1. Investigate the failed job(s) from the run URL above.
+2. Propose and implement the minimal fix in this repository.
+3. Open a PR with clear root-cause summary and test evidence.
+4. If needed, re-run affected workflow checks.
+
+@copilot please fix this CI failure automatically.
+EOF
+)
+          ISSUE_URL=$(gh issue create \
+            --repo "${{ steps.ctx.outputs.repo }}" \
+            --title "$TITLE" \
+            --body "$BODY" \
+            --label "autofix" \
+            --label "ci-failure")
+          echo "issue_url=$ISSUE_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Best-effort assign to Copilot
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ISSUE_NUMBER=$(basename "${{ steps.issue.outputs.issue_url }}")
+          gh issue edit "$ISSUE_NUMBER" --repo "${{ steps.ctx.outputs.repo }}" --add-assignee copilot
