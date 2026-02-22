@@ -241,24 +241,44 @@ jobs:
           name: auto-compat-artifacts-${{ env.UPSTREAM_VERSION }}
           path: out/*
 
-      - name: Cleanup workspace before commit
+      - name: Cleanup workspace before PR commit
         run: |
           rm -rf work out
 
-      - name: Commit and push compatibility update directly to main
+      - name: Create pull request for new compatibility support
+        id: cpr
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "chore(compat): add candidate support for ${{ env.UPSTREAM_VERSION }}"
+          branch: "auto/compat-${{ env.UPSTREAM_VERSION }}"
+          delete-branch: true
+          title: "chore(compat): add support candidate for ${{ env.UPSTREAM_VERSION }}"
+          body: |
+            Auto-generated compatibility support candidate.
+
+            - Upstream version: `${{ env.UPSTREAM_VERSION }}`
+            - Upstream commit: `${{ env.UPSTREAM_SHA }}`
+            - Patch set dir: `${{ env.AUTO_PATCHSET_DIR }}`
+            - Smoke result: `${{ steps.smoke.outcome }}`
+
+            Notes:
+            - Patch apply + build + smoke are all required (all-green policy).
+            - PR will be auto-merged when checks are green.
+          add-paths: |
+            compatibility.json
+            patches/**
+          labels: |
+            automation
+            compatibility
+
+      - name: Enable auto-merge for compatibility PR
+        if: steps.cpr.outputs.pull-request-number != '' && steps.smoke.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add compatibility.json patches/**
-          if git diff --cached --quiet; then
-            echo "No compatibility changes to commit"
-            exit 0
-          fi
-          git commit -m "chore(compat): auto-support ${{ env.UPSTREAM_VERSION }}"
-          git push origin HEAD:main
+          pr='${{ steps.cpr.outputs.pull-request-number }}'
+          gh pr merge "$pr" --repo "$GITHUB_REPOSITORY" --auto --squash --delete-branch
   pr-verify:
     if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'auto/compat-')
     runs-on: ubuntu-latest
