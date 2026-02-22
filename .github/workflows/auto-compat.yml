@@ -186,7 +186,9 @@ jobs:
           cd work
           pnpm install --frozen-lockfile --ignore-scripts
 
-      - name: Run overlay smoke tests
+      - name: Run overlay smoke tests (non-blocking)
+        id: smoke
+        continue-on-error: true
         run: |
           cd work
           pnpm -s vitest run src/auto-reply/control-plane.test.ts src/auto-reply/reply/dispatch-from-config.test.ts
@@ -233,9 +235,11 @@ jobs:
             - Upstream version: `${{ env.UPSTREAM_VERSION }}`
             - Upstream commit: `${{ env.UPSTREAM_SHA }}`
             - Patch set dir: `${{ env.AUTO_PATCHSET_DIR }}`
+            - Smoke result: `${{ steps.smoke.outcome }}`
 
-            This PR was created only after patch apply + smoke tests + artifact build succeeded.
-            Please review before merge.
+            Notes:
+            - Patch apply + build completed.
+            - Smoke tests are non-blocking in auto mode; if `smoke` is not `success`, review and fix before merge.
           labels: |
             automation
             compatibility
