@@ -26,23 +26,16 @@ jobs:
         id: latest
         run: |
           set -euo pipefail
-          read -r VERSION SHA < <(python3 -c 'import json
-with open("compatibility.json","r",encoding="utf-8") as f:
-    data=json.load(f)
-for e in data.get("supported",[]):
-    if e.get("status") == "deprecated":
-        continue
-    v=(e.get("openclawVersion") or "").strip()
-    s=(e.get("commitSha") or "").strip()
-    if v and s:
-        print(v, s)
-        break')
-          if [[ -z "${VERSION:-}" || -z "${SHA:-}" ]]; then
+          row=$(jq -r '.supported[] | select((.status // "") != "deprecated") | select(.openclawVersion and .commitSha) | "\(.openclawVersion) \(.commitSha)"' compatibility.json | head -n1)
+          if [[ -z "${row:-}" ]]; then
             echo "No valid compatibility entry found" >&2
             exit 1
           fi
+          VERSION="${row%% *}"
+          SHA="${row#* }"
           TAG="overlay-v${VERSION}"
           BRANCH="support/v${VERSION}"
+
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
@@ -73,15 +66,12 @@ for e in data.get("supported",[]):
             --repo "$REPO" \
             --target main \
             --title "$TAG" \
-            --notes "Auto-published support release for OpenClaw ${VERSION}\n\ncompat: ${VERSION} @ ${SHA}\n\nFor this version line, use support branch: ${{ steps.latest.outputs.branch }}"
+            --notes "Auto-published support release for OpenClaw ${VERSION}\n\ncompat: ${VERSION} @ ${SHA}\n\nSupport branch: ${{ steps.latest.outputs.branch }}"
 
       - name: Prune old support branches (keep latest N)
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           KEEP="${KEEP_SUPPORT_BRANCHES}"
-          # Sort support branches by committerdate desc, keep newest N, delete the rest.
           mapfile -t all < <(git for-each-ref refs/remotes/origin/support/v* --sort=-committerdate --format='%(refname:short)' | sed 's#^origin/##')
           echo "Found ${#all[@]} support branches"
           if (( ${#all[@]} <= KEEP )); then
