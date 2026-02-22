@@ -227,6 +227,7 @@ jobs:
           rm -rf work out
 
       - name: Create pull request for new compatibility support
+        id: cpr
         uses: peter-evans/create-pull-request@v7
         with:
           commit-message: "chore(compat): add candidate support for ${{ env.UPSTREAM_VERSION }}"
@@ -250,3 +251,12 @@ jobs:
           labels: |
             automation
             compatibility
+
+      - name: Enable auto-merge for compatibility PR
+        if: steps.cpr.outputs.pull-request-number != '' && steps.smoke.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pr='${{ steps.cpr.outputs.pull-request-number }}'
+          gh pr merge "$pr" --repo "$GITHUB_REPOSITORY" --auto --squash --delete-branch
