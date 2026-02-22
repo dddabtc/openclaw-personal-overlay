@@ -22,27 +22,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Discover latest upstream OpenClaw release tag + commit
+      - name: Discover latest upstream OpenClaw version + commit
         id: discover
         run: |
           set -euo pipefail
-          TAG=$(curl -fsSL https://api.github.com/repos/openclaw/openclaw/releases/latest | jq -r .tag_name)
-          if [[ -z "$TAG" || "$TAG" == "null" ]]; then
-            echo "Failed to resolve latest release tag" >&2
+
+          # Use npm latest as canonical runtime version (e.g. 2026.2.21-2),
+          # and map it to a git commit via npm gitHead when available.
+          NPM_META=$(curl -fsSL https://registry.npmjs.org/openclaw/latest)
+          NPM_VERSION=$(echo "$NPM_META" | jq -r '.version // empty')
+          NPM_GIT_HEAD=$(echo "$NPM_META" | jq -r '.gitHead // empty')
+          if [[ -z "$NPM_VERSION" ]]; then
+            echo "Failed to resolve npm latest openclaw version" >&2
             exit 1
           fi
 
-          SHA=$(git ls-remote https://github.com/openclaw/openclaw.git "refs/tags/${TAG}^{}" | awk '{print $1}' | head -n1)
-          if [[ -z "$SHA" ]]; then
-            SHA=$(git ls-remote https://github.com/openclaw/openclaw.git "refs/tags/${TAG}" | awk '{print $1}' | head -n1)
-          fi
-          if [[ -z "$SHA" ]]; then
-            echo "Failed to resolve commit for tag $TAG" >&2
+          RELEASE_TAG=$(curl -fsSL https://api.github.com/repos/openclaw/openclaw/releases/latest | jq -r '.tag_name // empty')
+          if [[ -z "$RELEASE_TAG" ]]; then
+            echo "Failed to resolve latest upstream release tag" >&2
             exit 1
           fi
 
-          echo "latest_tag=$TAG" >> "$GITHUB_OUTPUT"
+          SHA="$NPM_GIT_HEAD"
+          if [[ -z "$SHA" ]]; then
+            SHA=$(git ls-remote https://github.com/openclaw/openclaw.git "refs/tags/${RELEASE_TAG}^{}" | awk '{print $1}' | head -n1)
+            if [[ -z "$SHA" ]]; then
+              SHA=$(git ls-remote https://github.com/openclaw/openclaw.git "refs/tags/${RELEASE_TAG}" | awk '{print $1}' | head -n1)
+            fi
+          fi
+          if [[ -z "$SHA" ]]; then
+            echo "Failed to resolve commit for npm/release version" >&2
+            exit 1
+          fi
+
+          echo "latest_tag=v${NPM_VERSION}" >> "$GITHUB_OUTPUT"
           echo "latest_sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "Discovered npm latest v${NPM_VERSION} @ $SHA (release tag: $RELEASE_TAG)"
 
       - name: Check if already supported in compatibility.json
         id: check
