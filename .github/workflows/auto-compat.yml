@@ -70,22 +70,9 @@ jobs:
           set -euo pipefail
           TAG='${{ steps.discover.outputs.latest_tag }}'
           SHA='${{ steps.discover.outputs.latest_sha }}'
+          VERSION="${TAG#v}"
 
-          if python3 - "$TAG" "$SHA" <<'PY'
-          import json, sys
-          tag = sys.argv[1]
-          sha = sys.argv[2]
-          version = tag[1:] if tag.startswith('v') else tag
-          with open('compatibility.json','r',encoding='utf-8') as f:
-              d = json.load(f)
-          for e in d.get('supported', []):
-              if e.get('status') == 'deprecated':
-                  continue
-              if e.get('openclawVersion') == version and e.get('commitSha') == sha:
-                  raise SystemExit(0)
-          raise SystemExit(1)
-          PY
-          then
+          if jq -e --arg v "$VERSION" --arg sha "$SHA" '.supported[] | select((.status // "") != "deprecated") | select(.openclawVersion == $v and .commitSha == $sha)' compatibility.json >/dev/null; then
             echo "already_supported=true" >> "$GITHUB_OUTPUT"
           else
             echo "already_supported=false" >> "$GITHUB_OUTPUT"
@@ -118,19 +105,7 @@ jobs:
       - name: Prepare compatibility candidate patchset dir
         run: |
           set -euo pipefail
-          base_dir=$(python3 - <<'PY'
-          import json
-          with open('compatibility.json','r',encoding='utf-8') as f:
-              d = json.load(f)
-          for e in d.get('supported', []):
-              if e.get('status') == 'deprecated':
-                  continue
-              p = e.get('patchSetDir')
-              if p:
-                  print(p)
-                  break
-          PY
-          )
+          base_dir=$(jq -r '.supported[] | select((.status // "") != "deprecated") | .patchSetDir // empty' compatibility.json | head -n1)
 
           if [[ -z "$base_dir" ]]; then
             echo "No existing patchSetDir found in compatibility.json" >&2
@@ -140,43 +115,42 @@ jobs:
           short_sha="${UPSTREAM_SHA:0:12}"
           new_dir="patches/${short_sha}-autocompat"
           mkdir -p "$new_dir"
-          cp -a "$base_dir"/*.patch "$new_dir/"
+          mapfile -t patches < <(find "$base_dir" -maxdepth 1 -type f -name '*.patch' | sort)
+          if (( ${#patches[@]} == 0 )); then
+            echo "No patch files found under $base_dir" >&2
+            exit 1
+          fi
+          cp -a "${patches[@]}" "$new_dir/"
           echo "AUTO_PATCHSET_DIR=$new_dir" >> "$GITHUB_ENV"
 
       - name: Update compatibility.json with candidate support entry
         run: |
           set -euo pipefail
-          python3 - <<PY
-          import json
-          from datetime import datetime, timezone
+          version="${UPSTREAM_VERSION#v}"
+          sha="${UPSTREAM_SHA}"
+          patch_dir="${AUTO_PATCHSET_DIR}"
+          entry_id="oc-${version}-${sha:0:12}"
+          notes="Auto-candidate generated at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-          with open('compatibility.json','r',encoding='utf-8') as f:
-              d = json.load(f)
-
-          version = '${UPSTREAM_VERSION#v}'
-          sha = '${UPSTREAM_SHA}'
-          patch_dir = '${AUTO_PATCHSET_DIR}'
-          entry_id = f"oc-{version}-{sha[:12]}"
-
-          supported = [e for e in d.get('supported', []) if not (e.get('openclawVersion') == version and e.get('commitSha') == sha)]
-          new_entry = {
-            'id': entry_id,
-            'openclawVersion': version,
-            'commitSha': sha,
-            'upstreamBaseCommit': sha,
-            'overlayHeadCommit': 'PENDING_VALIDATION',
-            'patchSetDir': patch_dir,
-            'binaryArtifact': 'dist-overlay.tar.gz',
-            'atlasCompat': {'memory_search': 'expected', 'memory_get': 'expected'},
-            'notes': f"Auto-candidate generated at {datetime.now(timezone.utc).isoformat()}"
-          }
-          supported.insert(0, new_entry)
-          d['supported'] = supported
-
-          with open('compatibility.json','w',encoding='utf-8') as f:
-              json.dump(d, f, ensure_ascii=False, indent=2)
-              f.write('\n')
-          PY
+          tmp=$(mktemp)
+          jq --arg version "$version" \
+             --arg sha "$sha" \
+             --arg patch_dir "$patch_dir" \
+             --arg entry_id "$entry_id" \
+             --arg notes "$notes" \
+             '.supported = ([{
+                id: $entry_id,
+                openclawVersion: $version,
+                commitSha: $sha,
+                upstreamBaseCommit: $sha,
+                overlayHeadCommit: "PENDING_VALIDATION",
+                patchSetDir: $patch_dir,
+                binaryArtifact: "dist-overlay.tar.gz",
+                atlasCompat: {memory_search: "expected", memory_get: "expected"},
+                notes: $notes
+              }] + [(.supported // [])[] | select(.openclawVersion != $version or .commitSha != $sha)])' \
+             compatibility.json > "$tmp"
+          mv "$tmp" compatibility.json
 
       - name: Validate compatibility matrix
         run: scripts/validate-compatibility.py compatibility.json
@@ -222,18 +196,11 @@ jobs:
         run: |
           set -euo pipefail
           head_sha=$(git -C work rev-parse HEAD)
-          python3 - <<PY
-          import json
-          with open('compatibility.json','r',encoding='utf-8') as f:
-              d = json.load(f)
-          for e in d.get('supported', []):
-              if e.get('openclawVersion') == '${UPSTREAM_VERSION#v}' and e.get('commitSha') == '${UPSTREAM_SHA}':
-                  e['overlayHeadCommit'] = '${head_sha}'
-                  break
-          with open('compatibility.json','w',encoding='utf-8') as f:
-              json.dump(d, f, ensure_ascii=False, indent=2)
-              f.write('\n')
-          PY
+          version="${UPSTREAM_VERSION#v}"
+          sha="${UPSTREAM_SHA}"
+          tmp=$(mktemp)
+          jq --arg version "$version" --arg sha "$sha" --arg head "$head_sha" '(.supported // []) |= map(if .openclawVersion == $version and .commitSha == $sha then .overlayHeadCommit = $head else . end)' compatibility.json > "$tmp"
+          mv "$tmp" compatibility.json
 
       - name: Upload candidate artifacts
         uses: actions/upload-artifact@v4
@@ -271,8 +238,9 @@ jobs:
             automation
             compatibility
 
-      - name: Enable auto-merge for compatibility PR
+      - name: Enable auto-merge for compatibility PR (best-effort)
         if: steps.cpr.outputs.pull-request-number != '' && steps.smoke.outcome == 'success'
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

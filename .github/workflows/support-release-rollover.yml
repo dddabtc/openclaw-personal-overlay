@@ -64,7 +64,7 @@ jobs:
 
           gh release create "$TAG" \
             --repo "$REPO" \
-            --target main \
+            --target "${{ steps.latest.outputs.branch }}" \
             --title "$TAG" \
             --notes "Auto-published support release for OpenClaw ${VERSION}\n\ncompat: ${VERSION} @ ${SHA}\n\nSupport branch: ${{ steps.latest.outputs.branch }}"
 
