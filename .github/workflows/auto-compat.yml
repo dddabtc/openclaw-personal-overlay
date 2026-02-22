@@ -32,7 +32,6 @@ jobs:
             exit 1
           fi
 
-          # Resolve real tag commit (works for lightweight + annotated tags)
           SHA=$(git ls-remote https://github.com/openclaw/openclaw.git "refs/tags/${TAG}^{}" | awk '{print $1}' | head -n1)
           if [[ -z "$SHA" ]]; then
             SHA=$(git ls-remote https://github.com/openclaw/openclaw.git "refs/tags/${TAG}" | awk '{print $1}' | head -n1)
@@ -44,7 +43,6 @@ jobs:
 
           echo "latest_tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "latest_sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "Discovered latest release: $TAG @ $SHA"
 
       - name: Check if already supported in compatibility.json
         id: check
@@ -53,23 +51,24 @@ jobs:
           TAG='${{ steps.discover.outputs.latest_tag }}'
           SHA='${{ steps.discover.outputs.latest_sha }}'
 
-          if python3 - <<PY
-import json
-with open('compatibility.json','r',encoding='utf-8') as f:
-    d=json.load(f)
-for e in d.get('supported',[]):
-    if e.get('status') == 'deprecated':
-        continue
-    if e.get('openclawVersion') == '${TAG#v}' and e.get('commitSha') == '${SHA}':
-        raise SystemExit(0)
-raise SystemExit(1)
-PY
+          if python3 - "$TAG" "$SHA" <<'PY'
+          import json, sys
+          tag = sys.argv[1]
+          sha = sys.argv[2]
+          version = tag[1:] if tag.startswith('v') else tag
+          with open('compatibility.json','r',encoding='utf-8') as f:
+              d = json.load(f)
+          for e in d.get('supported', []):
+              if e.get('status') == 'deprecated':
+                  continue
+              if e.get('openclawVersion') == version and e.get('commitSha') == sha:
+                  raise SystemExit(0)
+          raise SystemExit(1)
+          PY
           then
             echo "already_supported=true" >> "$GITHUB_OUTPUT"
-            echo "Already supported, nothing to do"
           else
             echo "already_supported=false" >> "$GITHUB_OUTPUT"
-            echo "Not yet supported, will run validation"
           fi
 
   validate-and-pr:
@@ -100,18 +99,19 @@ PY
         run: |
           set -euo pipefail
           base_dir=$(python3 - <<'PY'
-import json
-with open('compatibility.json','r',encoding='utf-8') as f:
-    d=json.load(f)
-for e in d.get('supported',[]):
-    if e.get('status') == 'deprecated':
-        continue
-    p=e.get('patchSetDir')
-    if p:
-        print(p)
-        break
-PY
-)
+          import json
+          with open('compatibility.json','r',encoding='utf-8') as f:
+              d = json.load(f)
+          for e in d.get('supported', []):
+              if e.get('status') == 'deprecated':
+                  continue
+              p = e.get('patchSetDir')
+              if p:
+                  print(p)
+                  break
+          PY
+          )
+
           if [[ -z "$base_dir" ]]; then
             echo "No existing patchSetDir found in compatibility.json" >&2
             exit 1
@@ -122,44 +122,41 @@ PY
           mkdir -p "$new_dir"
           cp -a "$base_dir"/*.patch "$new_dir/"
           echo "AUTO_PATCHSET_DIR=$new_dir" >> "$GITHUB_ENV"
-          echo "Copied patch queue to $new_dir"
 
       - name: Update compatibility.json with candidate support entry
         run: |
           set -euo pipefail
           python3 - <<PY
-import json
-from datetime import datetime, timezone
+          import json
+          from datetime import datetime, timezone
 
-with open('compatibility.json','r',encoding='utf-8') as f:
-    d=json.load(f)
+          with open('compatibility.json','r',encoding='utf-8') as f:
+              d = json.load(f)
 
-version='${UPSTREAM_VERSION#v}'
-sha='${UPSTREAM_SHA}'
-patch_dir='${AUTO_PATCHSET_DIR}'
-entry_id=f"oc-{version}-{sha[:12]}"
+          version = '${UPSTREAM_VERSION#v}'
+          sha = '${UPSTREAM_SHA}'
+          patch_dir = '${AUTO_PATCHSET_DIR}'
+          entry_id = f"oc-{version}-{sha[:12]}"
 
-supported=[e for e in d.get('supported',[]) if not (e.get('openclawVersion')==version and e.get('commitSha')==sha)]
-new_entry={
-  "id": entry_id,
-  "openclawVersion": version,
-  "commitSha": sha,
-  "upstreamBaseCommit": sha,
-  "overlayHeadCommit": "PENDING_VALIDATION",
-  "patchSetDir": patch_dir,
-  "binaryArtifact": "dist-overlay.tar.gz",
-  "atlasCompat": {
-    "memory_search": "expected",
-    "memory_get": "expected"
-  },
-  "notes": f"Auto-candidate generated at {datetime.now(timezone.utc).isoformat()}"
-}
-supported.insert(0,new_entry)
-d['supported']=supported
-with open('compatibility.json','w',encoding='utf-8') as f:
-    json.dump(d,f,ensure_ascii=False,indent=2)
-    f.write('\n')
-PY
+          supported = [e for e in d.get('supported', []) if not (e.get('openclawVersion') == version and e.get('commitSha') == sha)]
+          new_entry = {
+            'id': entry_id,
+            'openclawVersion': version,
+            'commitSha': sha,
+            'upstreamBaseCommit': sha,
+            'overlayHeadCommit': 'PENDING_VALIDATION',
+            'patchSetDir': patch_dir,
+            'binaryArtifact': 'dist-overlay.tar.gz',
+            'atlasCompat': {'memory_search': 'expected', 'memory_get': 'expected'},
+            'notes': f"Auto-candidate generated at {datetime.now(timezone.utc).isoformat()}"
+          }
+          supported.insert(0, new_entry)
+          d['supported'] = supported
+
+          with open('compatibility.json','w',encoding='utf-8') as f:
+              json.dump(d, f, ensure_ascii=False, indent=2)
+              f.write('\n')
+          PY
 
       - name: Validate compatibility matrix
         run: scripts/validate-compatibility.py compatibility.json
@@ -205,17 +202,17 @@ PY
           set -euo pipefail
           head_sha=$(git -C work rev-parse HEAD)
           python3 - <<PY
-import json
-with open('compatibility.json','r',encoding='utf-8') as f:
-    d=json.load(f)
-for e in d.get('supported',[]):
-    if e.get('openclawVersion')=='${UPSTREAM_VERSION#v}' and e.get('commitSha')=='${UPSTREAM_SHA}':
-        e['overlayHeadCommit']='${head_sha}'
-        break
-with open('compatibility.json','w',encoding='utf-8') as f:
-    json.dump(d,f,ensure_ascii=False,indent=2)
-    f.write('\n')
-PY
+          import json
+          with open('compatibility.json','r',encoding='utf-8') as f:
+              d = json.load(f)
+          for e in d.get('supported', []):
+              if e.get('openclawVersion') == '${UPSTREAM_VERSION#v}' and e.get('commitSha') == '${UPSTREAM_SHA}':
+                  e['overlayHeadCommit'] = '${head_sha}'
+                  break
+          with open('compatibility.json','w',encoding='utf-8') as f:
+              json.dump(d, f, ensure_ascii=False, indent=2)
+              f.write('\n')
+          PY
 
       - name: Upload candidate artifacts
         uses: actions/upload-artifact@v4
