@@ -113,14 +113,29 @@ PY
 compat_match_json() {
   local version="$1"
   local commit="$2"
+  local allow_unknown="${OPENCLAW_PERSONAL_ALLOW_UNKNOWN_COMMIT:-1}"
   python3 - <<PY
 import json
+version = "$version"
+commit = "$commit"
+allow_unknown = "$allow_unknown" == "1"
 with open("$COMPAT_FILE", "r", encoding="utf-8") as f:
     data = json.load(f)
-for entry in data.get("supported", []):
-    if entry.get("openclawVersion") == "$version" and entry.get("commitSha") == "$commit":
+
+supported = [e for e in data.get("supported", []) if e.get("status") != "deprecated"]
+
+for entry in supported:
+    if entry.get("openclawVersion") == version and entry.get("commitSha") == commit:
         print(json.dumps(entry))
         raise SystemExit(0)
+
+# Optional fallback: if local install commit is unknown, allow unique version match.
+if allow_unknown and commit == "unknown":
+    by_version = [e for e in supported if e.get("openclawVersion") == version]
+    if len(by_version) == 1:
+        print(json.dumps(by_version[0]))
+        raise SystemExit(0)
+
 print("")
 PY
 }
@@ -148,7 +163,7 @@ latest_release_artifact_url() {
 import json,sys
 obj=json.load(sys.stdin)
 for a in obj.get("assets",[]):
-    if a.get("name",""").endswith("dist-overlay.tar.gz"):
+    if a.get("name","").endswith("dist-overlay.tar.gz"):
         print(a.get("browser_download_url",""))
         break
 PY
@@ -189,6 +204,9 @@ regular_apply() {
     err "incompatible local openclaw build; no changes made"
     err "required match key: openclawVersion + commitSha"
     exit $E_INCOMPATIBLE
+  fi
+  if [[ "$commit" == "unknown" ]]; then
+    log "commit unknown; using version-only compatibility fallback (set OPENCLAW_PERSONAL_ALLOW_UNKNOWN_COMMIT=0 to disable)"
   fi
 
   if [[ -z "$artifact" ]]; then
@@ -234,7 +252,7 @@ regular_apply() {
   backup_dir="$STATE_DIR/backups/$ts"
   mkdir -p "$backup_dir"
 
-  local payload_files
+  local payload_files payload_files_json
   payload_files="$(cd "$overlay_dir/payload" && find . -type f | sed 's#^\./##')"
   while IFS= read -r rel; do
     [[ -z "$rel" ]] && continue
@@ -246,6 +264,13 @@ regular_apply() {
 
   rsync -a "$overlay_dir/payload/" "$install_root/"
 
+  payload_files_json="$(printf '%s\n' "$payload_files" | python3 - <<'PY'
+import json,sys
+items=[line.strip() for line in sys.stdin if line.strip()]
+print(json.dumps(items))
+PY
+)"
+
   cat > "$INSTALL_STATE_FILE" <<JSON
 {
   "installedAt": "$ts",
@@ -253,7 +278,8 @@ regular_apply() {
   "openclawVersion": "${version}",
   "commitSha": "${commit}",
   "overlayVersion": "${overlay_version}",
-  "backupDir": "${backup_dir}"
+  "backupDir": "${backup_dir}",
+  "payloadFiles": ${payload_files_json}
 }
 JSON
 
@@ -303,6 +329,20 @@ regular_rollback() {
   backup_dir="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["backupDir"])' "$INSTALL_STATE_FILE")"
 
   [[ -d "$backup_dir" ]] || { err "backup directory missing: $backup_dir"; exit $E_NOT_FOUND; }
+
+  # Remove overlaid files first (including files newly added by overlay), then restore backup.
+  python3 - "$INSTALL_STATE_FILE" "$install_root" <<'PY'
+import json, os, pathlib, sys
+state = json.load(open(sys.argv[1], 'r', encoding='utf-8'))
+root = pathlib.Path(sys.argv[2])
+for rel in state.get('payloadFiles', []):
+    p = root / rel
+    try:
+        if p.exists() or p.is_symlink():
+            p.unlink()
+    except IsADirectoryError:
+        pass
+PY
 
   rsync -a "$backup_dir/" "$install_root/"
   rm -f "$INSTALL_STATE_FILE"
