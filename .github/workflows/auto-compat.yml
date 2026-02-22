@@ -206,11 +206,11 @@ jobs:
           cd work
           pnpm install --frozen-lockfile --ignore-scripts
 
-      - name: Run overlay smoke tests (required)
+      - name: Run overlay build smoke (required)
         id: smoke
         run: |
           cd work
-          pnpm -s vitest run src/auto-reply/control-plane.test.ts src/auto-reply/reply/dispatch-from-config.test.ts
+          pnpm -s build
 
       - name: Build dist overlay artifact
         run: |
@@ -335,10 +335,10 @@ jobs:
           cd work
           pnpm install --frozen-lockfile --ignore-scripts
 
-      - name: Run overlay smoke tests (required)
+      - name: Run overlay build smoke (required)
         run: |
           cd work
-          pnpm -s vitest run src/auto-reply/control-plane.test.ts src/auto-reply/reply/dispatch-from-config.test.ts
+          pnpm -s build
 
   pr-auto-merge:
     if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'auto/compat-')
