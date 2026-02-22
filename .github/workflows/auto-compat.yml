@@ -289,19 +289,13 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${GITHUB_HEAD_REF#auto/compat-v}"
-          SHA=$(python3 - <<PY
-import json
-v='${VERSION}'
-with open('compatibility.json','r',encoding='utf-8') as f:
-    d=json.load(f)
-for e in d.get('supported', []):
-    if e.get('status') == 'deprecated':
+          SHA=$(python3 -c 'import json,sys; v=sys.argv[1]; d=json.load(open("compatibility.json","r",encoding="utf-8"));
+for e in d.get("supported", []):
+    if e.get("status") == "deprecated":
         continue
-    if e.get('openclawVersion') == v and e.get('commitSha'):
-        print(e['commitSha'])
-        break
-PY
-)
+    if e.get("openclawVersion") == v and e.get("commitSha"):
+        print(e["commitSha"])
+        break' "$VERSION")
           if [[ -z "${SHA:-}" ]]; then
             echo "No compatible commit found for version $VERSION" >&2
             exit 1
