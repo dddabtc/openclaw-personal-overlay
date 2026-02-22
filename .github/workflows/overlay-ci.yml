@@ -61,6 +61,18 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Install dependencies for upstream baseline
+        if: success()
+        run: |
+          cd upstream
+          pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Build upstream baseline
+        if: success()
+        run: |
+          cd upstream
+          pnpm -s build
+
       - name: Apply overlay patch set (compat-gated)
         id: apply
         run: |
@@ -70,7 +82,7 @@ jobs:
           chmod +x scripts/apply-personal-patch.sh
           ./scripts/apply-personal-patch.sh ./work
 
-      - name: Install dependencies for upstream workspace
+      - name: Install dependencies for patched workspace
         if: success()
         run: |
           cd work
@@ -92,7 +104,7 @@ jobs:
       - name: Build dist overlay artifact
         if: success()
         run: |
-          scripts/build-dist-overlay.sh ./work dist-overlay
+          scripts/build-dist-overlay.sh ./work dist-overlay ./upstream
           mkdir -p out
           mv dist-overlay dist-overlay.tar.gz dist-overlay.tar.gz.sha256 out/
 
