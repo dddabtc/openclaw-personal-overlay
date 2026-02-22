@@ -8,6 +8,7 @@ name: autofix-on-failure
       - support-release-rollover
     types:
       - completed
+  workflow_dispatch: {}
 
 permissions:
   contents: read

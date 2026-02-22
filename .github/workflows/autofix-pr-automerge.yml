@@ -1,0 +1,55 @@
+name: autofix-pr-automerge
+
+"on":
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled, ready_for_review]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  enable-automerge:
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enable auto-merge for autofix PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          PR='${{ github.event.pull_request.number }}'
+          REPO='${{ github.repository }}'
+          STATE='${{ github.event.pull_request.state }}'
+          DRAFT='${{ github.event.pull_request.draft }}'
+          HEAD='${{ github.event.pull_request.head.ref }}'
+
+          if [[ "$STATE" != "open" || "$DRAFT" == "true" ]]; then
+            echo "PR is not merge-eligible (state=$STATE draft=$DRAFT); skip"
+            exit 0
+          fi
+
+          LABELS=$(gh pr view "$PR" --repo "$REPO" --json labels --jq '.labels[].name' || true)
+          SHOULD="0"
+
+          if echo "$LABELS" | grep -qx 'autofix'; then
+            SHOULD="1"
+          fi
+          if [[ "$HEAD" == autofix/* || "$HEAD" == copilot/* ]]; then
+            SHOULD="1"
+          fi
+
+          if [[ "$SHOULD" != "1" ]]; then
+            echo "Not an autofix PR (head=$HEAD, labels=[$LABELS]); skip"
+            exit 0
+          fi
+
+          gh pr merge "$PR" --repo "$REPO" --auto --squash --delete-branch
+          echo "Auto-merge enabled for PR #$PR"
+
+  dispatch-smoke:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "workflow_dispatch smoke OK"
