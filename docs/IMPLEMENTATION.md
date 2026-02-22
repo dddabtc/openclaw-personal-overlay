@@ -83,16 +83,19 @@ Do not couple Atlas protocol changes to core overlay patches.
 
 ## Current Status in this Repo
 
-Implemented now:
+Implemented:
 
 - Compatibility manifest (`compatibility.json`)
 - Source apply script (`scripts/apply-personal-patch.sh`)
 - Rollback script (`scripts/rollback-personal-patch.sh`)
-- Initial CI workflow (`.github/workflows/overlay-ci.yml`)
-- User CLI wrapper (`bin/openclaw-personal`)
-
-Planned next:
-
-- Binary/dist overlay delivery path for non-source users
-- Auto-release packaging + checksum publication
-- Automatic upstream tracking with compatibility matrix refresh
+- CI workflow (`.github/workflows/overlay-ci.yml`) with dynamic upstream
+  commit resolution and blocking smoke tests
+- User CLI wrapper (`bin/openclaw-personal`) with atomic apply (staging
+  dir), backup integrity verification on rollback, and compatibility gating
+- Binary/dist overlay delivery path for non-source users (regular-user mode
+  in `bin/openclaw-personal`)
+- Auto-release packaging + checksum publication (`scripts/build-dist-overlay.sh`,
+  release job in CI)
+- Automatic upstream tracking and compatibility matrix refresh
+  (`.github/workflows/auto-compat.yml`, compatibility candidate generation
+  in CI)
