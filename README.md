@@ -162,6 +162,18 @@ Current workflow does:
 8. upload artifacts
 9. on `v*` tags, publish release assets
 
+### Auto-compat PR workflow
+
+This repo also includes `.github/workflows/auto-compat.yml` for automatic compatibility candidate generation:
+
+- discovers latest `openclaw/openclaw` release tag + commit on a schedule
+- skips if already present in `compatibility.json`
+- clones the current patch queue into a new candidate patch-set dir
+- runs apply + smoke tests + artifact build against the new upstream commit
+- if all checks pass, opens a PR that updates `compatibility.json` (manual review still required)
+
+This gives you GitHub automation without directly auto-merging compatibility into `main`. 
+
 ### About “non-blocking smoke tests”
 
 `continue-on-error: true` means smoke failures are reported but do not fail the entire workflow job.

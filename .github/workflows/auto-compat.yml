@@ -1,0 +1,241 @@
+name: auto-compat
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 */6 * * *'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      latest_tag: ${{ steps.discover.outputs.latest_tag }}
+      latest_sha: ${{ steps.discover.outputs.latest_sha }}
+      already_supported: ${{ steps.check.outputs.already_supported }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Discover latest upstream OpenClaw release tag + commit
+        id: discover
+        run: |
+          set -euo pipefail
+          TAG=$(curl -fsSL https://api.github.com/repos/openclaw/openclaw/releases/latest | jq -r .tag_name)
+          if [[ -z "$TAG" || "$TAG" == "null" ]]; then
+            echo "Failed to resolve latest release tag" >&2
+            exit 1
+          fi
+
+          # Resolve real tag commit (works for lightweight + annotated tags)
+          SHA=$(git ls-remote https://github.com/openclaw/openclaw.git "refs/tags/${TAG}^{}" | awk '{print $1}' | head -n1)
+          if [[ -z "$SHA" ]]; then
+            SHA=$(git ls-remote https://github.com/openclaw/openclaw.git "refs/tags/${TAG}" | awk '{print $1}' | head -n1)
+          fi
+          if [[ -z "$SHA" ]]; then
+            echo "Failed to resolve commit for tag $TAG" >&2
+            exit 1
+          fi
+
+          echo "latest_tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "latest_sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Discovered latest release: $TAG @ $SHA"
+
+      - name: Check if already supported in compatibility.json
+        id: check
+        run: |
+          set -euo pipefail
+          TAG='${{ steps.discover.outputs.latest_tag }}'
+          SHA='${{ steps.discover.outputs.latest_sha }}'
+
+          if python3 - <<PY
+import json
+with open('compatibility.json','r',encoding='utf-8') as f:
+    d=json.load(f)
+for e in d.get('supported',[]):
+    if e.get('status') == 'deprecated':
+        continue
+    if e.get('openclawVersion') == '${TAG#v}' and e.get('commitSha') == '${SHA}':
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+          then
+            echo "already_supported=true" >> "$GITHUB_OUTPUT"
+            echo "Already supported, nothing to do"
+          else
+            echo "already_supported=false" >> "$GITHUB_OUTPUT"
+            echo "Not yet supported, will run validation"
+          fi
+
+  validate-and-pr:
+    runs-on: ubuntu-latest
+    needs: discover
+    if: needs.discover.outputs.already_supported != 'true'
+    env:
+      UPSTREAM_TAG: ${{ needs.discover.outputs.latest_tag }}
+      UPSTREAM_SHA: ${{ needs.discover.outputs.latest_sha }}
+      UPSTREAM_VERSION: ${{ needs.discover.outputs.latest_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup toolchain
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Prepare compatibility candidate patchset dir
+        run: |
+          set -euo pipefail
+          base_dir=$(python3 - <<'PY'
+import json
+with open('compatibility.json','r',encoding='utf-8') as f:
+    d=json.load(f)
+for e in d.get('supported',[]):
+    if e.get('status') == 'deprecated':
+        continue
+    p=e.get('patchSetDir')
+    if p:
+        print(p)
+        break
+PY
+)
+          if [[ -z "$base_dir" ]]; then
+            echo "No existing patchSetDir found in compatibility.json" >&2
+            exit 1
+          fi
+
+          short_sha="${UPSTREAM_SHA:0:12}"
+          new_dir="patches/${short_sha}-autocompat"
+          mkdir -p "$new_dir"
+          cp -a "$base_dir"/*.patch "$new_dir/"
+          echo "AUTO_PATCHSET_DIR=$new_dir" >> "$GITHUB_ENV"
+          echo "Copied patch queue to $new_dir"
+
+      - name: Update compatibility.json with candidate support entry
+        run: |
+          set -euo pipefail
+          python3 - <<PY
+import json
+from datetime import datetime, timezone
+
+with open('compatibility.json','r',encoding='utf-8') as f:
+    d=json.load(f)
+
+version='${UPSTREAM_VERSION#v}'
+sha='${UPSTREAM_SHA}'
+patch_dir='${AUTO_PATCHSET_DIR}'
+entry_id=f"oc-{version}-{sha[:12]}"
+
+supported=[e for e in d.get('supported',[]) if not (e.get('openclawVersion')==version and e.get('commitSha')==sha)]
+new_entry={
+  "id": entry_id,
+  "openclawVersion": version,
+  "commitSha": sha,
+  "upstreamBaseCommit": sha,
+  "overlayHeadCommit": "PENDING_VALIDATION",
+  "patchSetDir": patch_dir,
+  "binaryArtifact": "dist-overlay.tar.gz",
+  "atlasCompat": {
+    "memory_search": "expected",
+    "memory_get": "expected"
+  },
+  "notes": f"Auto-candidate generated at {datetime.now(timezone.utc).isoformat()}"
+}
+supported.insert(0,new_entry)
+d['supported']=supported
+with open('compatibility.json','w',encoding='utf-8') as f:
+    json.dump(d,f,ensure_ascii=False,indent=2)
+    f.write('\n')
+PY
+
+      - name: Validate compatibility matrix
+        run: scripts/validate-compatibility.py compatibility.json
+
+      - name: Checkout upstream openclaw at candidate commit
+        uses: actions/checkout@v4
+        with:
+          repository: openclaw/openclaw
+          ref: ${{ env.UPSTREAM_SHA }}
+          path: work
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C ./work config user.name "github-actions[bot]"
+          git -C ./work config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Apply overlay patch set (candidate)
+        run: |
+          set -euo pipefail
+          OVERLAY_CI_ONLY_APPLY=1 ./scripts/apply-personal-patch.sh ./work
+
+      - name: Install dependencies for upstream workspace
+        run: |
+          cd work
+          pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Run overlay smoke tests
+        run: |
+          cd work
+          pnpm -s vitest run src/auto-reply/control-plane.test.ts src/auto-reply/reply/dispatch-from-config.test.ts
+
+      - name: Build dist overlay artifact
+        run: |
+          scripts/build-dist-overlay.sh ./work dist-overlay
+          mkdir -p out
+          mv dist-overlay dist-overlay.tar.gz dist-overlay.tar.gz.sha256 out/
+
+      - name: Fill overlayHeadCommit in compatibility.json
+        run: |
+          set -euo pipefail
+          head_sha=$(git -C work rev-parse HEAD)
+          python3 - <<PY
+import json
+with open('compatibility.json','r',encoding='utf-8') as f:
+    d=json.load(f)
+for e in d.get('supported',[]):
+    if e.get('openclawVersion')=='${UPSTREAM_VERSION#v}' and e.get('commitSha')=='${UPSTREAM_SHA}':
+        e['overlayHeadCommit']='${head_sha}'
+        break
+with open('compatibility.json','w',encoding='utf-8') as f:
+    json.dump(d,f,ensure_ascii=False,indent=2)
+    f.write('\n')
+PY
+
+      - name: Upload candidate artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: auto-compat-artifacts-${{ env.UPSTREAM_VERSION }}
+          path: out/*
+
+      - name: Create pull request for new compatibility support
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "chore(compat): add candidate support for ${{ env.UPSTREAM_VERSION }}"
+          branch: "auto/compat-${{ env.UPSTREAM_VERSION }}"
+          delete-branch: true
+          title: "chore(compat): add support candidate for ${{ env.UPSTREAM_VERSION }}"
+          body: |
+            Auto-generated compatibility support candidate.
+
+            - Upstream version: `${{ env.UPSTREAM_VERSION }}`
+            - Upstream commit: `${{ env.UPSTREAM_SHA }}`
+            - Patch set dir: `${{ env.AUTO_PATCHSET_DIR }}`
+
+            This PR was created only after patch apply + smoke tests + artifact build succeeded.
+            Please review before merge.
+          labels: |
+            automation
+            compatibility
