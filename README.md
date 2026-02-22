@@ -63,7 +63,8 @@ What regular mode does today:
 
 - detects local OpenClaw install
 - checks compatibility matrix
-- downloads latest release artifact (or uses `--artifact`)
+- resolves a **version-matched release tag** first (`overlay-v<openclawVersion>`), or uses `--artifact`
+- optional fallback to latest release only when `OPENCLAW_PERSONAL_FALLBACK_TO_LATEST_RELEASE=1`
 - applies payload with backup + install-state tracking
 - rollback restores backed-up files from last apply
 

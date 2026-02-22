@@ -156,6 +156,20 @@ download_artifact_if_url() {
   fi
 }
 
+release_artifact_url_for_tag() {
+  local repo="$1"
+  local tag="$2"
+  local api="https://api.github.com/repos/${repo}/releases/tags/${tag}"
+  curl -fsSL "$api" | python3 - <<'PY'
+import json,sys
+obj=json.load(sys.stdin)
+for a in obj.get("assets",[]):
+    if a.get("name","").endswith("dist-overlay.tar.gz"):
+        print(a.get("browser_download_url",""))
+        break
+PY
+}
+
 latest_release_artifact_url() {
   local repo="$1"
   local api="https://api.github.com/repos/${repo}/releases/latest"
@@ -210,9 +224,21 @@ regular_apply() {
   fi
 
   if [[ -z "$artifact" ]]; then
-    artifact="$(latest_release_artifact_url "$release_repo")"
+    local version_tag="overlay-v${version}"
+    artifact="$(release_artifact_url_for_tag "$release_repo" "$version_tag" 2>/dev/null || true)"
+
+    if [[ -n "$artifact" ]]; then
+      log "resolved version-matched artifact from release tag: ${version_tag}"
+    else
+      if [[ "${OPENCLAW_PERSONAL_FALLBACK_TO_LATEST_RELEASE:-0}" == "1" ]]; then
+        artifact="$(latest_release_artifact_url "$release_repo" 2>/dev/null || true)"
+        [[ -n "$artifact" ]] && log "version tag not found; fell back to latest release artifact"
+      fi
+    fi
+
     if [[ -z "$artifact" ]]; then
-      err "failed to discover latest dist-overlay artifact from GitHub releases"
+      err "failed to discover version-matched artifact (expected tag: ${version_tag})"
+      err "if you want fallback behavior, set OPENCLAW_PERSONAL_FALLBACK_TO_LATEST_RELEASE=1"
       exit $E_NOT_FOUND
     fi
   fi
