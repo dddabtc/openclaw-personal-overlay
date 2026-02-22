@@ -38,15 +38,26 @@ cat > "$ART/dist-overlay/metadata.json" <<'JSON'
 JSON
 
 echo 'OVERLAY' > "$ART/dist-overlay/payload/dist/banner.txt"
+cat > "$ART/dist-overlay/payload/package.json" <<'JSON'
+{
+  "name": "openclaw",
+  "version": "0.0.0-should-not-overwrite"
+}
+JSON
 (
   cd "$ART/dist-overlay"
-  sha256sum payload/dist/banner.txt metadata.json > checksums.sha256
+  sha256sum payload/dist/banner.txt payload/package.json metadata.json > checksums.sha256
 )
 tar -czf "$TMP/dist-overlay.tar.gz" -C "$ART" dist-overlay
 
-"$BIN" apply --artifact "$TMP/dist-overlay.tar.gz"
+"$BIN" apply "$TMP/dist-overlay.tar.gz"
 [[ "$(cat "$INSTALL_ROOT/dist/banner.txt")" == "OVERLAY" ]] || fail "apply did not update payload"
-pass "compatible apply success"
+[[ "$(python3 - "$INSTALL_ROOT/package.json" <<'PY'
+import json, sys
+print(json.load(open(sys.argv[1]))['version'])
+PY
+)" == "2026.2.20" ]] || fail "apply overwrote installed package.json"
+pass "compatible apply success + package.json protected"
 
 STATUS_OUT="$($BIN status)"
 echo "$STATUS_OUT" | grep -q 'compatibility_match=true' || fail "status missing compatibility match"
