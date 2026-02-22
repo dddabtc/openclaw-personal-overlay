@@ -147,8 +147,9 @@ ensure_state_dir() {
 download_artifact_if_url() {
   local artifact="$1"
   if [[ "$artifact" =~ ^https?:// ]]; then
+    mkdir -p "$STATE_DIR"
     local out="$STATE_DIR/tmp-artifact-$(date +%s).tar.gz"
-    log "downloading artifact: $artifact"
+    echo "[openclaw-personal] downloading artifact: $artifact" >&2
     curl -fsSL "$artifact" -o "$out"
     echo "$out"
   else
@@ -160,27 +161,23 @@ release_artifact_url_for_tag() {
   local repo="$1"
   local tag="$2"
   local api="https://api.github.com/repos/${repo}/releases/tags/${tag}"
-  curl -fsSL "$api" | python3 - <<'PY'
-import json,sys
+  curl -fsSL "$api" | python3 -c 'import json,sys
 obj=json.load(sys.stdin)
 for a in obj.get("assets",[]):
     if a.get("name","").endswith("dist-overlay.tar.gz"):
         print(a.get("browser_download_url",""))
-        break
-PY
+        break'
 }
 
 latest_release_artifact_url() {
   local repo="$1"
   local api="https://api.github.com/repos/${repo}/releases/latest"
-  curl -fsSL "$api" | python3 - <<'PY'
-import json,sys
+  curl -fsSL "$api" | python3 -c 'import json,sys
 obj=json.load(sys.stdin)
 for a in obj.get("assets",[]):
     if a.get("name","").endswith("dist-overlay.tar.gz"):
         print(a.get("browser_download_url",""))
-        break
-PY
+        break'
 }
 
 parse_json_field() {
@@ -260,11 +257,21 @@ regular_apply() {
   m_commit="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["targetCommitSha"])' "$overlay_dir/metadata.json")"
   overlay_version="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["overlayVersion"])' "$overlay_dir/metadata.json")"
 
-  if [[ "$m_ver" != "$version" || "$m_commit" != "$commit" ]]; then
-    err "artifact incompatible with local install; no changes made"
-    err "local:   version=$version commit=$commit"
-    err "artifact version=$m_ver commit=$m_commit"
-    exit $E_INCOMPATIBLE
+  if [[ "$commit" == "unknown" ]]; then
+    if [[ "$m_ver" != "$version" ]]; then
+      err "artifact incompatible with local install; no changes made"
+      err "local:   version=$version commit=$commit"
+      err "artifact version=$m_ver commit=$m_commit"
+      exit $E_INCOMPATIBLE
+    fi
+    log "artifact commit check relaxed because local commit is unknown"
+  else
+    if [[ "$m_ver" != "$version" || "$m_commit" != "$commit" ]]; then
+      err "artifact incompatible with local install; no changes made"
+      err "local:   version=$version commit=$commit"
+      err "artifact version=$m_ver commit=$m_commit"
+      exit $E_INCOMPATIBLE
+    fi
   fi
 
   if [[ -f "$overlay_dir/checksums.sha256" ]]; then
