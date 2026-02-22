@@ -38,11 +38,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Resolve upstream commit SHA from compatibility.json
+        id: resolve-ref
+        run: python3 scripts/resolve-upstream-ref.py compatibility.json
+        env:
+          GITHUB_REF: ${{ github.ref }}
+
       - name: Checkout upstream openclaw
         uses: actions/checkout@v4
         with:
           repository: openclaw/openclaw
-          ref: 083298ab9da98238c6fb1e008c8994a565427f2a
+          ref: ${{ steps.resolve-ref.outputs.upstream_sha }}
           path: upstream
           fetch-depth: 0
 
@@ -88,18 +94,12 @@ jobs:
           cd work
           pnpm install --frozen-lockfile --ignore-scripts
 
-      - name: Run smoke tests (non-blocking)
-        if: success()
-        continue-on-error: true
-        run: |
-          cd work
-          pnpm -s vitest run src/auto-reply/control-plane.test.ts src/auto-reply/reply/dispatch-from-config.test.ts
-
-      - name: Build patched source
+      - name: Run smoke tests
         if: success()
         run: |
           cd work
           pnpm -s build
+          pnpm -s vitest run src/auto-reply/control-plane.test.ts src/auto-reply/reply/dispatch-from-config.test.ts
 
       - name: Build dist overlay artifact
         if: success()
