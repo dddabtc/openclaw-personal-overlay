@@ -285,17 +285,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
       - name: Resolve PR target version and commit
         run: |
           set -euo pipefail
           VERSION="${GITHUB_HEAD_REF#auto/compat-v}"
-          SHA=$(python3 -c 'import json,sys; v=sys.argv[1]; d=json.load(open("compatibility.json","r",encoding="utf-8"));
-for e in d.get("supported", []):
-    if e.get("status") == "deprecated":
-        continue
-    if e.get("openclawVersion") == v and e.get("commitSha"):
-        print(e["commitSha"])
-        break' "$VERSION")
+          SHA=$(jq -r --arg v "$VERSION" '.supported[] | select((.status // "") != "deprecated") | select(.openclawVersion == $v) | .commitSha // empty' compatibility.json | head -n1)
           if [[ -z "${SHA:-}" ]]; then
             echo "No compatible commit found for version $VERSION" >&2
             exit 1
