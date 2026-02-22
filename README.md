@@ -170,9 +170,17 @@ This repo also includes `.github/workflows/auto-compat.yml` for automatic compat
 - skips if already present in `compatibility.json`
 - clones the current patch queue into a new candidate patch-set dir
 - runs apply + smoke tests + artifact build against the new upstream commit
-- if all checks pass, opens a PR that updates `compatibility.json` (manual review still required)
+- if checks pass, opens a PR that updates `compatibility.json` (manual review required)
 
-This gives you GitHub automation without directly auto-merging compatibility into `main`. 
+### Support branch + release rollover (latest 20)
+
+This repo includes `.github/workflows/support-release-rollover.yml` to enforce versioned support operations:
+
+- when `compatibility.json` changes on `main`, it creates/updates a support branch for the latest compatible version (for example `support/v2026.2.21-2`)
+- creates a matching release tag (`overlay-v<version>`) if missing
+- prunes old support branches and keeps only the latest 20
+- old releases remain as immutable artifacts; if a version is outside latest 20, it is not actively maintained by default
+
 
 ### About “non-blocking smoke tests”
 

@@ -1,0 +1,97 @@
+name: support-release-rollover
+
+"on":
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - 'compatibility.json'
+      - '.github/workflows/support-release-rollover.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  publish-and-prune:
+    runs-on: ubuntu-latest
+    env:
+      KEEP_SUPPORT_BRANCHES: '20'
+      REPO: dddabtc/openclaw-personal-overlay
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve latest non-deprecated compatibility entry
+        id: latest
+        run: |
+          set -euo pipefail
+          read -r VERSION SHA < <(python3 - <<'PY'
+import json
+with open('compatibility.json','r',encoding='utf-8') as f:
+    data=json.load(f)
+for e in data.get('supported',[]):
+    if e.get('status') == 'deprecated':
+        continue
+    v=e.get('openclawVersion','').strip()
+    s=e.get('commitSha','').strip()
+    if v and s:
+        print(v, s)
+        break
+PY
+)
+          if [[ -z "${VERSION:-}" || -z "${SHA:-}" ]]; then
+            echo "No valid compatibility entry found" >&2
+            exit 1
+          fi
+          TAG="overlay-v${VERSION}"
+          BRANCH="support/v${VERSION}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Create/update support branch for latest compatible version
+        run: |
+          set -euo pipefail
+          BRANCH='${{ steps.latest.outputs.branch }}'
+          git checkout -B "$BRANCH" origin/main
+          git push origin "$BRANCH" --force-with-lease
+
+      - name: Publish release tag for latest compatible version (idempotent)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG='${{ steps.latest.outputs.tag }}'
+          VERSION='${{ steps.latest.outputs.version }}'
+          SHA='${{ steps.latest.outputs.sha }}'
+
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; skip create"
+            exit 0
+          fi
+
+          gh release create "$TAG" \
+            --repo "$REPO" \
+            --target main \
+            --title "$TAG" \
+            --notes "Auto-published support release for OpenClaw ${VERSION}\n\ncompat: ${VERSION} @ ${SHA}\n\nFor this version line, use support branch: ${{ steps.latest.outputs.branch }}"
+
+      - name: Prune old support branches (keep latest N)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          KEEP="${KEEP_SUPPORT_BRANCHES}"
+          # Sort support branches by committerdate desc, keep newest N, delete the rest.
+          mapfile -t all < <(git for-each-ref refs/remotes/origin/support/v* --sort=-committerdate --format='%(refname:short)' | sed 's#^origin/##')
+          echo "Found ${#all[@]} support branches"
+          if (( ${#all[@]} <= KEEP )); then
+            echo "No pruning needed"
+            exit 0
+          fi
+          for b in "${all[@]:KEEP}"; do
+            echo "Deleting old support branch: $b"
+            git push origin --delete "$b" || true
+          done
