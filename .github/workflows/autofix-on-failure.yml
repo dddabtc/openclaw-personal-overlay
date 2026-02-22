@@ -67,12 +67,18 @@ jobs:
             '4. If needed, re-run affected workflow checks.' \
             '' \
             '@copilot please fix this CI failure automatically.'
+
           ISSUE_URL=$(gh issue create \
             --repo "${{ steps.ctx.outputs.repo }}" \
             --title "$TITLE" \
-            --body "$BODY" \
-            --label "autofix" \
-            --label "ci-failure")
+            --body "$BODY")
+          ISSUE_NUMBER=$(basename "$ISSUE_URL")
+
+          # Best-effort labels (create if missing)
+          gh api --silent -X POST repos/${{ steps.ctx.outputs.repo }}/labels -f name='autofix' -f color='B60205' -f description='Auto-generated fix task' || true
+          gh api --silent -X POST repos/${{ steps.ctx.outputs.repo }}/labels -f name='ci-failure' -f color='D93F0B' -f description='Created from failed workflow run' || true
+          gh issue edit "$ISSUE_NUMBER" --repo "${{ steps.ctx.outputs.repo }}" --add-label autofix --add-label ci-failure || true
+
           echo "issue_url=$ISSUE_URL" >> "$GITHUB_OUTPUT"
 
       - name: Best-effort assign to Copilot
