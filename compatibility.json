@@ -41,7 +41,8 @@
         "memory_search": "expected",
         "memory_get": "expected"
       },
-      "notes": "Auto-candidate generated at 2026-02-22T14:10:59.798619+00:00"
+      "notes": "Auto-candidate generated at 2026-02-22T14:10:59.798619+00:00 | Deprecated in favor of 2026.2.21-2",
+      "status": "deprecated"
     },
     {
       "id": "oc-2026.2.20-083298ab9da9",
