@@ -246,6 +246,7 @@ regular_apply() {
   ensure_state_dir
   local tmpdir
   tmpdir="$(mktemp -d)"
+  trap 'rm -rf "$tmpdir"' RETURN
   tar -xzf "$artifact" -C "$tmpdir"
 
   local overlay_dir="$tmpdir/dist-overlay"
@@ -298,12 +299,7 @@ regular_apply() {
   # Never overwrite installed package.json in regular-user mode.
   rsync -a --exclude 'package.json' "$overlay_dir/payload/" "$install_root/"
 
-  payload_files_json="$(printf '%s\n' "$payload_files" | python3 - <<'PY'
-import json,sys
-items=[line.strip() for line in sys.stdin if line.strip()]
-print(json.dumps(items))
-PY
-)"
+  payload_files_json="$(python3 -c 'import json,sys; print(json.dumps([line.strip() for line in sys.argv[1].splitlines() if line.strip()]))' "$payload_files")"
 
   cat > "$INSTALL_STATE_FILE" <<JSON
 {

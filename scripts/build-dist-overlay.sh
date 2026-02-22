@@ -95,7 +95,10 @@ JSON
 
 (
   cd "$OUT_DIR"
-  find payload -type f -print0 | xargs -0 sha256sum > checksums.sha256
+  : > checksums.sha256
+  while IFS= read -r -d '' f; do
+    sha256sum "$f" >> checksums.sha256
+  done < <(find payload -type f -print0)
   sha256sum metadata.json >> checksums.sha256
 )
 

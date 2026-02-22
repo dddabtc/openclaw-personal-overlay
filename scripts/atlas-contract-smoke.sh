@@ -13,7 +13,7 @@ fi
 
 echo "[atlas-smoke] live mode against $ATLAS_URL"
 search_payload='{"query":"smoke","limit":1}'
-search_resp="$(curl -fsS "$ATLAS_URL/memories/search" -X POST -H 'content-type: application/json' -d "$search_payload")"
+search_resp="$(curl -fsS --connect-timeout 5 --max-time 20 "$ATLAS_URL/memories/search" -X POST -H 'content-type: application/json' -d "$search_payload")"
 echo "$search_resp" | python3 -c 'import json,sys;d=json.load(sys.stdin);assert isinstance(d.get("items"),list)'
 
 echo '[atlas-smoke] memory_search contract OK'

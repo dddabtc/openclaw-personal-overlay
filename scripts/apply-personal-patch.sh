@@ -41,7 +41,13 @@ if [[ -n "$(git status --porcelain)" ]]; then
   exit 4
 fi
 
-git am "$patch_dir"/*.patch
+mapfile -t patch_files < <(find "$patch_dir" -maxdepth 1 -type f -name '*.patch' | sort)
+if (( ${#patch_files[@]} == 0 )); then
+  echo "[ERR] no patch files found in: $patch_dir" >&2
+  exit 5
+fi
+
+git am "${patch_files[@]}"
 echo "[OK] patches applied"
 
 if [[ "${CI:-}" == "true" || "${OVERLAY_CI_ONLY_APPLY:-0}" == "1" ]]; then
@@ -49,7 +55,14 @@ if [[ "${CI:-}" == "true" || "${OVERLAY_CI_ONLY_APPLY:-0}" == "1" ]]; then
   exit 0
 fi
 
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "[ERR] pnpm not found; cannot build patched source" >&2
+  exit 6
+fi
+
 pnpm -s build
 npm install -g . --prefix ~/.local
-systemctl --user restart openclaw-gateway.service || true
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl --user restart openclaw-gateway.service || true
+fi
 echo "[OK] build/install/restart done"

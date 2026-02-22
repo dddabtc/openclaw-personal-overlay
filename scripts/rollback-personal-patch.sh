@@ -37,8 +37,27 @@ fi
 
 cd "$TARGET_REPO"
 git am --abort >/dev/null 2>&1 || true
+
+if [[ -n "$(git status --porcelain)" ]]; then
+  echo "[ERR] working tree is dirty; commit/stash first" >&2
+  exit 4
+fi
+
 git reset --hard "$base"
+
+if [[ "${CI:-}" == "true" || "${OVERLAY_CI_ONLY_APPLY:-0}" == "1" ]]; then
+  echo "[OK] CI mode detected; skipping local build/install/restart"
+  exit 0
+fi
+
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "[ERR] pnpm not found; cannot build rolled-back source" >&2
+  exit 6
+fi
+
 pnpm -s build
 npm install -g . --prefix ~/.local
-systemctl --user restart openclaw-gateway.service || true
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl --user restart openclaw-gateway.service || true
+fi
 echo "[OK] rolled back to base $base"
