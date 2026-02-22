@@ -21,7 +21,7 @@ err() { echo "[openclaw-personal][ERR] $*" >&2; }
 usage() {
   cat <<'EOF'
 openclaw-personal commands:
-  apply [--source <openclaw-src-path>] [--artifact <path|url>] [--release-repo <owner/repo>]
+  apply [--source <openclaw-src-path>] [artifact-path-or-url] [--artifact <path|url>] [--release-repo <owner/repo>]
   rollback [--source <openclaw-src-path>]
   status [--source <openclaw-src-path>]
 
@@ -286,7 +286,7 @@ regular_apply() {
   mkdir -p "$backup_dir"
 
   local payload_files payload_files_json
-  payload_files="$(cd "$overlay_dir/payload" && find . -type f | sed 's#^\./##')"
+  payload_files="$(cd "$overlay_dir/payload" && find . -type f | sed 's#^\./##' | grep -v '^package\.json$' || true)"
   while IFS= read -r rel; do
     [[ -z "$rel" ]] && continue
     mkdir -p "$backup_dir/$(dirname "$rel")"
@@ -295,7 +295,8 @@ regular_apply() {
     fi
   done <<< "$payload_files"
 
-  rsync -a "$overlay_dir/payload/" "$install_root/"
+  # Never overwrite installed package.json in regular-user mode.
+  rsync -a --exclude 'package.json' "$overlay_dir/payload/" "$install_root/"
 
   payload_files_json="$(printf '%s\n' "$payload_files" | python3 - <<'PY'
 import json,sys
@@ -395,7 +396,16 @@ case "$cmd" in
         --source) src="$2"; shift 2 ;;
         --artifact) artifact="$2"; shift 2 ;;
         --release-repo) release_repo="$2"; shift 2 ;;
-        *) err "unknown arg: $1"; exit $E_USAGE ;;
+        --*) err "unknown arg: $1"; exit $E_USAGE ;;
+        *)
+          if [[ -z "$artifact" ]]; then
+            artifact="$1"
+            shift
+          else
+            err "unexpected positional arg: $1"
+            exit $E_USAGE
+          fi
+          ;;
       esac
     done
     if [[ -n "$src" ]]; then
