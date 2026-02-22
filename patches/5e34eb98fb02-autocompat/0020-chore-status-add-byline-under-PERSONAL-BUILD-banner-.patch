@@ -1,0 +1,48 @@
+From 91e0ffcfd080470aa540bcac078107401ff1da53 Mon Sep 17 00:00:00 2001
+From: zhaod <zhaod@local>
+Date: Fri, 20 Feb 2026 23:49:29 -0400
+Subject: [PATCH 20/20] chore(status): add byline under PERSONAL BUILD banner
+ and document format
+
+
+diff --git a/docs/debug/telegram-control-inbound-test.md b/docs/debug/telegram-control-inbound-test.md
+index 990347f9456e8d4c8b11e13e03aada930115d4c3..61ad924861bd558ed25175225beeafddc3ab5213 100755
+--- a/docs/debug/telegram-control-inbound-test.md
++++ b/docs/debug/telegram-control-inbound-test.md
+@@ -102,3 +102,13 @@ python3 scripts/test_telegram_subsession_pressure.py \
+   --messages "ssh 到192.168.1.136 用户名是 zhaod，执行 hostname 并把结果告诉我" \
+   --rounds 1 --pause 0.5 --settle 20
+ ```
++
++## Status banner format (current)
++
++The `/status` output includes a custom banner block:
++
++1. `🦞 OpenClaw <version> (<commit>)`
++2. `🏷️ PERSONAL BUILD · <dist-publish-time>(UTC)`
++3. `by: https://github.com/dddabtc`
++
++This is rendered in the fast status path currently used on 113.
+diff --git a/src/auto-reply/status.ts b/src/auto-reply/status.ts
+index 347a976640e82e92ac81c559c0e4b71a72313938..27723bd6c07528973f155ee7f72d67cb4ff9714b 100644
+--- a/src/auto-reply/status.ts
++++ b/src/auto-reply/status.ts
+@@ -551,6 +551,7 @@ export function buildStatusMessage(args: StatusArgs): string {
+   const commit = resolveCommitHash();
+   const versionLine = `🦞 OpenClaw ${VERSION}${commit ? ` (${commit})` : ""}`;
+   const personalLine = `🏷️ PERSONAL BUILD · ${resolveDistPublishDateTime()}`;
++  const byLine = `by: https://github.com/dddabtc`;
+   const usagePair = formatUsagePair(inputTokens, outputTokens);
+   const cacheLine = formatCacheLine(inputTokens, cacheRead, cacheWrite);
+   const costLine = costLabel ? `💵 Cost: ${costLabel}` : null;
+@@ -562,6 +563,7 @@ export function buildStatusMessage(args: StatusArgs): string {
+   return [
+     versionLine,
+     personalLine,
++    byLine,
+     args.timeLine,
+     modelLine,
+     fallbackLine,
+-- 
+2.25.1
+
