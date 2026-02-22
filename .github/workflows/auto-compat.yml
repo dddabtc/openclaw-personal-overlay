@@ -222,6 +222,10 @@ jobs:
           name: auto-compat-artifacts-${{ env.UPSTREAM_VERSION }}
           path: out/*
 
+      - name: Cleanup workspace before PR commit
+        run: |
+          rm -rf work out
+
       - name: Create pull request for new compatibility support
         uses: peter-evans/create-pull-request@v7
         with:
@@ -240,6 +244,9 @@ jobs:
             Notes:
             - Patch apply + build completed.
             - Smoke tests are non-blocking in auto mode; if `smoke` is not `success`, review and fix before merge.
+          add-paths: |
+            compatibility.json
+            patches/**
           labels: |
             automation
             compatibility
