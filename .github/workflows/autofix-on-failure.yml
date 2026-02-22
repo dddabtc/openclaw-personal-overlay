@@ -52,23 +52,21 @@ jobs:
         run: |
           set -euo pipefail
           TITLE="[autofix] ${{ steps.ctx.outputs.workflow }} failed on ${{ steps.ctx.outputs.branch }}"
-          BODY=$(cat <<EOF
-An automated workflow failed and needs auto-repair.
-
-- Workflow: `${{ steps.ctx.outputs.workflow }}`
-- Branch: `${{ steps.ctx.outputs.branch }}`
-- Failed jobs: `${{ steps.ctx.outputs.failed_jobs }}`
-- Run: ${{ steps.ctx.outputs.run_url }}
-
-Task for GitHub Copilot coding agent:
-1. Investigate the failed job(s) from the run URL above.
-2. Propose and implement the minimal fix in this repository.
-3. Open a PR with clear root-cause summary and test evidence.
-4. If needed, re-run affected workflow checks.
-
-@copilot please fix this CI failure automatically.
-EOF
-)
+          printf -v BODY '%s\n' \
+            'An automated workflow failed and needs auto-repair.' \
+            '' \
+            '- Workflow: `${{ steps.ctx.outputs.workflow }}`' \
+            '- Branch: `${{ steps.ctx.outputs.branch }}`' \
+            '- Failed jobs: `${{ steps.ctx.outputs.failed_jobs }}`' \
+            '- Run: ${{ steps.ctx.outputs.run_url }}' \
+            '' \
+            'Task for GitHub Copilot coding agent:' \
+            '1. Investigate the failed job(s) from the run URL above.' \
+            '2. Propose and implement the minimal fix in this repository.' \
+            '3. Open a PR with clear root-cause summary and test evidence.' \
+            '4. If needed, re-run affected workflow checks.' \
+            '' \
+            '@copilot please fix this CI failure automatically.'
           ISSUE_URL=$(gh issue create \
             --repo "${{ steps.ctx.outputs.repo }}" \
             --title "$TITLE" \
