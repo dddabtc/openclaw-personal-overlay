@@ -80,4 +80,63 @@ set -e
 [[ "$(cat "$INSTALL_ROOT/dist/banner.txt")" == "OVERLAY" ]] || fail "incompatible apply changed files"
 pass "incompatible apply blocked"
 
+# ======================================================================
+# Test: Rollback after a successful apply
+# ======================================================================
+
+# At this point the overlay IS applied (banner.txt=OVERLAY) and an
+# install-state.json was created by the earlier successful apply.
+"$BIN" rollback
+[[ "$(cat "$INSTALL_ROOT/dist/banner.txt")" == "BASELINE" ]] || fail "rollback did not restore original banner.txt"
+STATE_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/openclaw-personal-overlay/install-state.json"
+[[ ! -f "$STATE_FILE" ]] || fail "rollback did not remove install-state.json"
+pass "rollback restores original files and removes state"
+
+# ======================================================================
+# Test: Corrupt artifact (bad checksum) is rejected
+# ======================================================================
+
+# Restore compatible package.json so apply can pass the compat check.
+cat > "$INSTALL_ROOT/package.json" <<'JSON'
+{
+  "name": "openclaw",
+  "version": "2026.2.20",
+  "gitHead": "083298ab9da98238c6fb1e008c8994a565427f2a"
+}
+JSON
+
+ART_BAD="$TMP/art-bad"
+mkdir -p "$ART_BAD/dist-overlay/payload/dist"
+cp "$ART/dist-overlay/metadata.json" "$ART_BAD/dist-overlay/metadata.json"
+echo 'OVERLAY' > "$ART_BAD/dist-overlay/payload/dist/banner.txt"
+# Write an intentionally wrong checksum so sha256sum -c fails.
+printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  payload/dist/banner.txt\n' \
+  > "$ART_BAD/dist-overlay/checksums.sha256"
+tar -czf "$TMP/dist-overlay-bad.tar.gz" -C "$ART_BAD" dist-overlay
+
+set +e
+"$BIN" apply "$TMP/dist-overlay-bad.tar.gz" >/tmp/ocp-bad.log 2>&1
+rc=$?
+set -e
+[[ $rc -ne 0 ]] || fail "corrupt artifact (bad checksum) should have failed"
+[[ "$(cat "$INSTALL_ROOT/dist/banner.txt")" == "BASELINE" ]] || fail "corrupt artifact apply modified install root"
+pass "corrupt artifact rejected by checksum verification"
+
+# ======================================================================
+# Test: Status reports compatibility_match=false for unknown version
+# ======================================================================
+
+cat > "$INSTALL_ROOT/package.json" <<'JSON'
+{
+  "name": "openclaw",
+  "version": "9999.0.0",
+  "gitHead": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+}
+JSON
+
+UNKNOWN_STATUS="$("$BIN" status)"
+echo "$UNKNOWN_STATUS" | grep -q 'compatibility_match=false' \
+  || fail "status should report compatibility_match=false for unknown version"
+pass "status reports compatibility_match=false for unknown version"
+
 echo "all tests passed"
