@@ -1,0 +1,76 @@
+From e7684a286fc13254b89eaa1129f2e5dd1fec14fc Mon Sep 17 00:00:00 2001
+From: dddabtc <zhaodali78@gmail.com>
+Date: Sun, 22 Feb 2026 14:23:17 -0400
+Subject: [PATCH 14/16] fix(exec): hard-block ssh and long exec in main session
+ policy
+
+---
+ ...ash-tools.exec.main-session-policy.test.ts | 17 +++++++++++++++++
+ src/agents/bash-tools.exec.ts                 | 19 ++++++++++++++++---
+ 2 files changed, 33 insertions(+), 3 deletions(-)
+
+diff --git a/src/agents/bash-tools.exec.main-session-policy.test.ts b/src/agents/bash-tools.exec.main-session-policy.test.ts
+index 567311829..7c6618c67 100644
+--- a/src/agents/bash-tools.exec.main-session-policy.test.ts
++++ b/src/agents/bash-tools.exec.main-session-policy.test.ts
+@@ -35,4 +35,21 @@ describe("exec main-session long-run guard", () => {
+       }),
+     ).rejects.toThrow("Main session policy blocked exec");
+   });
++
++  it("rejects ssh-style exec in main session", async () => {
++    const tool = createExecTool({
++      sessionKey: "agent:alpha:main",
++      mainSessionPolicy: {
++        forbidLongExec: true,
++        maxExecTimeoutSec: 120,
++      },
++    });
++
++    await expect(
++      tool.execute("call-deny-ssh", {
++        command: "ssh user@example.com hostname",
++        timeout: 30,
++      }),
++    ).rejects.toThrow("Main session policy blocked exec");
++  });
+ });
+diff --git a/src/agents/bash-tools.exec.ts b/src/agents/bash-tools.exec.ts
+index 06201a2e7..b19621094 100644
+--- a/src/agents/bash-tools.exec.ts
++++ b/src/agents/bash-tools.exec.ts
+@@ -163,6 +163,15 @@ function resolveMainSessionMaxExecTimeoutSec(policy?: ExecMainSessionPolicy) {
+   return Math.floor(raw);
+ }
+ 
++function isSshLikeExecCommand(command: string): boolean {
++  const trimmed = command.trim();
++  if (!trimmed) {
++    return false;
++  }
++  // Keep this strict to reduce false positives: block direct SSH-family invocations.
++  return /^(?:ssh|scp|sftp)\b/i.test(trimmed);
++}
++
+ export function createExecTool(
+   defaults?: ExecToolDefaults,
+   // oxlint-disable-next-line typescript/no-explicit-any
+@@ -252,11 +261,15 @@ export function createExecTool(
+         const longExecByForeground =
+           !backgroundRequestedByPolicy &&
+           (mainSessionPolicy.requireBackgroundForExec || yieldExceedsLimit);
+-        if (longExecByTimeout || longExecByForeground) {
++        const sshLikeCommand = isSshLikeExecCommand(params.command);
++        if (longExecByTimeout || longExecByForeground || sshLikeCommand) {
++          const reason = sshLikeCommand
++            ? "this command invokes SSH-family tooling (ssh/scp/sftp)"
++            : `this command is considered long-running (timeout must be <= ${maxExecTimeoutSec}s and long runs must use background mode)`;
+           throw new Error(
+             [
+-              `Main session policy blocked exec: this command is considered long-running (timeout must be <= ${maxExecTimeoutSec}s and long runs must use background mode).`,
+-              "Use sessions_spawn for longer tasks, or rerun exec with background=true / an appropriate yieldMs and timeout.",
++              `Main session policy blocked exec: ${reason}.`,
++              "Use sessions_spawn to run this in a sub-session, or rerun exec with background=true plus an appropriate yieldMs/timeout when policy allows.",
+             ].join("\n"),
+           );
+         }

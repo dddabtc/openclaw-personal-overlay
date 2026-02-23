@@ -1,0 +1,638 @@
+From d8fb89aeb042858f5560832776405478b4d65455 Mon Sep 17 00:00:00 2001
+From: dddabtc <zhaodali78@gmail.com>
+Date: Fri, 20 Feb 2026 17:19:38 -0400
+Subject: [PATCH 08/16] feat(control-plane): route /stop and /status via
+ durable control plane
+
+---
+ scripts/control-plane-benchmark.ts            |  98 ++++++
+ src/auto-reply/control-plane.test.ts          | 124 +++++++
+ src/auto-reply/control-plane.ts               | 324 ++++++++++++++++++
+ .../reply/dispatch-from-config.test.ts        |  19 +
+ src/auto-reply/reply/dispatch-from-config.ts  |   9 +
+ 5 files changed, 574 insertions(+)
+ create mode 100644 scripts/control-plane-benchmark.ts
+ create mode 100644 src/auto-reply/control-plane.test.ts
+ create mode 100644 src/auto-reply/control-plane.ts
+
+diff --git a/scripts/control-plane-benchmark.ts b/scripts/control-plane-benchmark.ts
+new file mode 100644
+index 000000000..cffce8847
+--- /dev/null
++++ b/scripts/control-plane-benchmark.ts
+@@ -0,0 +1,98 @@
++import { performance } from "node:perf_hooks";
++import { dispatchReplyFromConfig } from "../src/auto-reply/reply/dispatch-from-config.js";
++import type { ReplyDispatcher } from "../src/auto-reply/reply/reply-dispatcher.js";
++import { buildTestCtx } from "../src/auto-reply/reply/test-ctx.js";
++import type { OpenClawConfig } from "../src/config/config.js";
++
++function percentile(values: number[], p: number): number {
++  if (values.length === 0) {
++    return 0;
++  }
++  const sorted = [...values].toSorted((a, b) => a - b);
++  const idx = Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1);
++  return sorted[Math.max(0, idx)] ?? 0;
++}
++
++async function run() {
++  const cfg = {} as OpenClawConfig;
++  const ack: number[] = [];
++  const status: number[] = [];
++  const dispatch: number[] = [];
++
++  for (let round = 0; round < 5; round += 1) {
++    const jobs: Promise<void>[] = [];
++    for (let i = 0; i < 5; i += 1) {
++      jobs.push(
++        (async () => {
++          const t0 = performance.now();
++          const marks: number[] = [];
++          const dispatcher: ReplyDispatcher = {
++            sendToolResult: () => true,
++            sendBlockReply: () => true,
++            sendFinalReply: () => {
++              marks.push(performance.now());
++              return true;
++            },
++            waitForIdle: async () => {},
++            getQueuedCounts: () => ({ tool: 0, block: 0, final: marks.length }),
++            markComplete: () => {},
++          };
++          await dispatchReplyFromConfig({
++            ctx: buildTestCtx({ Body: "/stop", CommandBody: "/stop", CommandAuthorized: true }),
++            cfg,
++            dispatcher,
++          });
++          if (marks.length >= 1) {
++            ack.push(marks[0] - t0);
++          }
++          if (marks.length >= 2) {
++            dispatch.push(marks[1] - marks[0]);
++          }
++        })(),
++      );
++      jobs.push(
++        (async () => {
++          const t0 = performance.now();
++          const dispatcher: ReplyDispatcher = {
++            sendToolResult: () => true,
++            sendBlockReply: () => true,
++            sendFinalReply: () => true,
++            waitForIdle: async () => {},
++            getQueuedCounts: () => ({ tool: 0, block: 0, final: 1 }),
++            markComplete: () => {},
++          };
++          await dispatchReplyFromConfig({
++            ctx: buildTestCtx({ Body: "/status", CommandBody: "/status", CommandAuthorized: true }),
++            cfg,
++            dispatcher,
++          });
++          status.push(performance.now() - t0);
++        })(),
++      );
++    }
++    await Promise.all(jobs);
++  }
++
++  const ackP95 = percentile(ack, 95);
++  const statusP95 = percentile(status, 95);
++  const dispatchP95 = percentile(dispatch, 95);
++
++  console.log(
++    JSON.stringify(
++      {
++        rounds: 5,
++        samples: { ack: ack.length, status: status.length, dispatch: dispatch.length },
++        p95: { ackMs: ackP95, statusMs: statusP95, stopDispatchMs: dispatchP95 },
++        pass: {
++          ack: ackP95 < 200,
++          status: statusP95 < 500,
++          dispatch: dispatchP95 < 2000,
++        },
++      },
++      null,
++      2,
++    ),
++  );
++}
++
++void run();
+diff --git a/src/auto-reply/control-plane.test.ts b/src/auto-reply/control-plane.test.ts
+new file mode 100644
+index 000000000..a37010d67
+--- /dev/null
++++ b/src/auto-reply/control-plane.test.ts
+@@ -0,0 +1,124 @@
++import fs from "node:fs";
++import os from "node:os";
++import path from "node:path";
++import { beforeEach, describe, expect, it, vi } from "vitest";
++import type { OpenClawConfig } from "../config/config.js";
++import { maybeHandleControlPlaneCommand, matchStrictControlCommand } from "./control-plane.js";
++import type { ReplyDispatcher } from "./reply/reply-dispatcher.js";
++import { buildTestCtx } from "./reply/test-ctx.js";
++
++const abortMock = vi.hoisted(() =>
++  vi.fn(async () => ({ handled: true, aborted: true, stoppedSubagents: 0 })),
++);
++
++vi.mock("./reply/abort.js", async () => {
++  const actual = await vi.importActual<typeof import("./reply/abort.js")>("./reply/abort.js");
++  return {
++    ...actual,
++    tryFastAbortFromMessage: abortMock,
++  };
++});
++
++function createDispatcher(): ReplyDispatcher {
++  return {
++    sendToolResult: vi.fn(() => true),
++    sendBlockReply: vi.fn(() => true),
++    sendFinalReply: vi.fn(() => true),
++    waitForIdle: vi.fn(async () => {}),
++    getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 0 })),
++    markComplete: vi.fn(),
++  };
++}
++
++describe("control plane strict matching", () => {
++  it("matches only full /stop or /status forms", () => {
++    expect(matchStrictControlCommand(" /stop ")?.command).toBe("stop");
++    expect(matchStrictControlCommand("/status@openclaw")?.command).toBe("status");
++    expect(matchStrictControlCommand("hello /stop")).toBeNull();
++    expect(matchStrictControlCommand("/status now")).toBeNull();
++    expect(matchStrictControlCommand("/stop\nnext")).toBeNull();
++  });
++});
++
++describe("maybeHandleControlPlaneCommand", () => {
++  const originalStateDir = process.env.OPENCLAW_STATE_DIR;
++  beforeEach(() => {
++    abortMock.mockClear();
++    process.env.OPENCLAW_STATE_DIR = originalStateDir;
++  });
++
++  it("handles /stop in control plane and sends ack before final", async () => {
++    const dispatcher = createDispatcher();
++    const ctx = buildTestCtx({
++      Body: "/stop",
++      CommandBody: "/stop",
++      CommandAuthorized: true,
++    });
++
++    const result = await maybeHandleControlPlaneCommand({
++      ctx,
++      cfg: {} as OpenClawConfig,
++      dispatcher,
++    });
++
++    expect(result.handled).toBe(true);
++    expect(abortMock).toHaveBeenCalledTimes(1);
++    const calls = (dispatcher.sendFinalReply as ReturnType<typeof vi.fn>).mock.calls;
++    expect(calls.length).toBeGreaterThanOrEqual(2);
++    expect(String(calls[0]?.[0]?.text ?? "")).toContain("Stopping...");
++  });
++
++  it("does not handle non-full matches", async () => {
++    const dispatcher = createDispatcher();
++    const ctx = buildTestCtx({
++      Body: "please /stop",
++      CommandBody: "please /stop",
++      CommandAuthorized: true,
++    });
++
++    const result = await maybeHandleControlPlaneCommand({
++      ctx,
++      cfg: {} as OpenClawConfig,
++      dispatcher,
++    });
++    expect(result.handled).toBe(false);
++    expect(abortMock).not.toHaveBeenCalled();
++  });
++
++  it("supports abortable control waits", async () => {
++    const dispatcher = createDispatcher();
++    const ctx = buildTestCtx({ Body: "/stop", CommandBody: "/stop", CommandAuthorized: true });
++    const ac = new AbortController();
++    ac.abort();
++
++    const result = await maybeHandleControlPlaneCommand({
++      ctx,
++      cfg: {} as OpenClawConfig,
++      dispatcher,
++      signal: ac.signal,
++    });
++
++    expect(result.handled).toBe(true);
++    const calls = (dispatcher.sendFinalReply as ReturnType<typeof vi.fn>).mock.calls;
++    expect(String(calls[calls.length - 1]?.[0]?.text ?? "")).toContain("aborted");
++  });
++
++  it("replays non-terminal commands into recovered terminal event", async () => {
++    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "oc-control-"));
++    process.env.OPENCLAW_STATE_DIR = stateDir;
++    const agentDir = path.join(stateDir, "agents", "main");
++    fs.mkdirSync(agentDir, { recursive: true });
++    fs.writeFileSync(
++      path.join(agentDir, "control-queue.jsonl"),
++      `${JSON.stringify({ commandId: "cmd_pending" })}\n`,
++      "utf8",
++    );
++
++    const dispatcher = createDispatcher();
++    const ctx = buildTestCtx({ Body: "/status", CommandBody: "/status", CommandAuthorized: true });
++    await maybeHandleControlPlaneCommand({ ctx, cfg: {} as OpenClawConfig, dispatcher });
++
++    const events = fs.readFileSync(path.join(agentDir, "control-events.jsonl"), "utf8");
++    expect(events).toContain("TIMED_OUT_RECOVERED");
++  });
++});
+diff --git a/src/auto-reply/control-plane.ts b/src/auto-reply/control-plane.ts
+new file mode 100644
+index 000000000..475864d6c
+--- /dev/null
++++ b/src/auto-reply/control-plane.ts
+@@ -0,0 +1,324 @@
++import crypto from "node:crypto";
++import fs from "node:fs";
++import path from "node:path";
++import { resolveSessionAgentId } from "../agents/agent-scope.js";
++import type { OpenClawConfig } from "../config/config.js";
++import { resolveStateDir } from "../config/paths.js";
++import { resolveCommandAuthorization } from "./command-auth.js";
++import { formatAbortReplyText, tryFastAbortFromMessage } from "./reply/abort.js";
++import type { ReplyDispatcher } from "./reply/reply-dispatcher.js";
++import type { FinalizedMsgContext } from "./templating.js";
++
++export const STRICT_CONTROL_COMMAND_RE = /^\/(stop|status)(?:@[\w_]+)?$/i;
++
++type ControlCommand = "stop" | "status";
++
++type ControlEnvelope = {
++  commandId: string;
++  seq: number;
++  agentId: string;
++  adapter: string;
++  chatId?: string;
++  senderId?: string;
++  sessionId?: string;
++  normalized: `/${ControlCommand}`;
++  raw: string;
++  ingressAt: string;
++  deadlineMs: number;
++};
++
++type ControlState = {
++  lastCommandId?: string;
++  lastCommand?: string;
++  status?: "queued" | "ack_sent" | "done" | "failed" | "timed_out";
++  updatedAt?: string;
++  lastResult?: string;
++};
++
++export function matchStrictControlCommand(
++  raw?: string,
++): { command: ControlCommand; rawTrimmed: string } | null {
++  const rawTrimmed = String(raw ?? "").trim();
++  if (!rawTrimmed) {
++    return null;
++  }
++  const m = rawTrimmed.match(STRICT_CONTROL_COMMAND_RE);
++  if (!m) {
++    return null;
++  }
++  const command = m[1]?.toLowerCase();
++  if (command !== "stop" && command !== "status") {
++    return null;
++  }
++  return { command, rawTrimmed };
++}
++
++function appendJsonl(filePath: string, record: unknown): void {
++  fs.mkdirSync(path.dirname(filePath), { recursive: true });
++  fs.appendFileSync(filePath, `${JSON.stringify(record)}\n`, "utf8");
++}
++
++class AdapterCommandLogWriter {
++  constructor(
++    private readonly adapter: string,
++    private readonly stateDir: string,
++  ) {}
++  write(record: unknown): void {
++    appendJsonl(path.join(this.stateDir, "adapters", this.adapter, "command-log.jsonl"), record);
++  }
++}
++
++class AgentControlIngressWriter {
++  constructor(
++    private readonly agentId: string,
++    private readonly stateDir: string,
++  ) {}
++  appendQueue(record: unknown): void {
++    appendJsonl(path.join(this.stateDir, "agents", this.agentId, "control-queue.jsonl"), record);
++  }
++}
++
++class AgentControlExecutorWriter {
++  constructor(
++    private readonly agentId: string,
++    private readonly stateDir: string,
++  ) {}
++  appendEvent(record: unknown): void {
++    appendJsonl(path.join(this.stateDir, "agents", this.agentId, "control-events.jsonl"), record);
++  }
++  writeState(state: ControlState): void {
++    const filePath = path.join(this.stateDir, "agents", this.agentId, "control-state.json");
++    fs.mkdirSync(path.dirname(filePath), { recursive: true });
++    fs.writeFileSync(filePath, JSON.stringify(state, null, 2), "utf8");
++  }
++  readState(): ControlState {
++    const filePath = path.join(this.stateDir, "agents", this.agentId, "control-state.json");
++    try {
++      return JSON.parse(fs.readFileSync(filePath, "utf8")) as ControlState;
++    } catch {
++      return {};
++    }
++  }
++}
++
++function shortCommandId(commandId: string): string {
++  return commandId.slice(-6);
++}
++
++let globalSeq = 0;
++
++async function withTimeout<T>(
++  promise: Promise<T>,
++  timeoutMs: number,
++  signal?: AbortSignal,
++): Promise<{ ok: true; value: T } | { ok: false; reason: "timeout" | "aborted" }> {
++  if (signal?.aborted) {
++    return { ok: false, reason: "aborted" };
++  }
++  return await new Promise((resolve) => {
++    const timer = setTimeout(
++      () => resolve({ ok: false as const, reason: "timeout" as const }),
++      timeoutMs,
++    );
++    const onAbort = () => {
++      clearTimeout(timer);
++      resolve({ ok: false as const, reason: "aborted" as const });
++    };
++    signal?.addEventListener("abort", onAbort, { once: true });
++    void promise
++      .then((value) => {
++        clearTimeout(timer);
++        signal?.removeEventListener("abort", onAbort);
++        resolve({ ok: true as const, value });
++      })
++      .catch(() => {
++        clearTimeout(timer);
++        signal?.removeEventListener("abort", onAbort);
++        resolve({ ok: false as const, reason: "timeout" as const });
++      });
++  });
++}
++
++function recoverNonTerminalCommands(agentId: string, stateDir: string): void {
++  const queueFile = path.join(stateDir, "agents", agentId, "control-queue.jsonl");
++  const eventsFile = path.join(stateDir, "agents", agentId, "control-events.jsonl");
++  if (!fs.existsSync(queueFile)) {
++    return;
++  }
++  const queueLines = fs
++    .readFileSync(queueFile, "utf8")
++    .split("\n")
++    .map((l) => l.trim())
++    .filter(Boolean)
++    .map((l) => JSON.parse(l) as { commandId?: string });
++  const terminal = new Set<string>();
++  if (fs.existsSync(eventsFile)) {
++    for (const line of fs.readFileSync(eventsFile, "utf8").split("\n")) {
++      const t = line.trim();
++      if (!t) {
++        continue;
++      }
++      const evt = JSON.parse(t) as { commandId?: string; type?: string };
++      if (
++        evt.commandId &&
++        ["DONE", "FAILED", "TIMED_OUT", "TIMED_OUT_RECOVERED"].includes(String(evt.type))
++      ) {
++        terminal.add(evt.commandId);
++      }
++    }
++  }
++  const execWriter = new AgentControlExecutorWriter(agentId, stateDir);
++  for (const item of queueLines) {
++    if (!item.commandId || terminal.has(item.commandId)) {
++      continue;
++    }
++    execWriter.appendEvent({
++      eventId: `evt_${crypto.randomUUID()}`,
++      commandId: item.commandId,
++      agentId,
++      type: "TIMED_OUT_RECOVERED",
++      at: new Date().toISOString(),
++      data: { reason: "startup_recovery" },
++    });
++  }
++}
++
++export async function maybeHandleControlPlaneCommand(params: {
++  ctx: FinalizedMsgContext;
++  cfg: OpenClawConfig;
++  dispatcher: ReplyDispatcher;
++  signal?: AbortSignal;
++}): Promise<{ handled: boolean }> {
++  const { ctx, cfg, dispatcher, signal } = params;
++  const matched = matchStrictControlCommand(ctx.CommandBody ?? ctx.RawBody ?? ctx.Body ?? "");
++  if (!matched) {
++    return { handled: false };
++  }
++
++  const auth = resolveCommandAuthorization({ ctx, cfg, commandAuthorized: ctx.CommandAuthorized });
++  if (!auth.isAuthorizedSender) {
++    return { handled: true };
++  }
++
++  const adapter = String(ctx.Surface ?? ctx.Provider ?? "unknown").toLowerCase();
++  const agentId = resolveSessionAgentId({ sessionKey: ctx.SessionKey ?? "", config: cfg });
++  const stateDir = resolveStateDir();
++  recoverNonTerminalCommands(agentId, stateDir);
++
++  const commandId = `cmd_${crypto.randomUUID()}`;
++  const seq = ++globalSeq;
++  const now = new Date().toISOString();
++  const envelope: ControlEnvelope = {
++    commandId,
++    seq,
++    agentId,
++    adapter,
++    chatId: ctx.To ?? ctx.From,
++    senderId: auth.senderId,
++    sessionId: ctx.SessionKey,
++    normalized: `/${matched.command}`,
++    raw: matched.rawTrimmed,
++    ingressAt: now,
++    deadlineMs: matched.command === "status" ? 1000 : 3000,
++  };
++
++  const adapterWriter = new AdapterCommandLogWriter(adapter, stateDir);
++  const ingressWriter = new AgentControlIngressWriter(agentId, stateDir);
++  const execWriter = new AgentControlExecutorWriter(agentId, stateDir);
++
++  adapterWriter.write({ type: "RECEIVED", at: now, commandId, raw: matched.rawTrimmed });
++
++  if (matched.command === "status") {
++    const statusResult = await withTimeout(Promise.resolve(execWriter.readState()), 1000, signal);
++    const text = statusResult.ok
++      ? `Status#${shortCommandId(commandId)}: ${statusResult.value.status ?? "idle"}`
++      : `Status#${shortCommandId(commandId)}: timeout`;
++    dispatcher.sendFinalReply({ text });
++    execWriter.appendEvent({
++      eventId: `evt_${crypto.randomUUID()}`,
++      commandId,
++      seq,
++      agentId,
++      type: "DONE",
++      at: new Date().toISOString(),
++      data: { fastPath: true, status: statusResult.ok ? "ok" : statusResult.reason },
++    });
++    return { handled: true };
++  }
++
++  ingressWriter.appendQueue(envelope);
++  execWriter.appendEvent({
++    eventId: `evt_${crypto.randomUUID()}`,
++    commandId,
++    seq,
++    agentId,
++    type: "ENQUEUED",
++    at: new Date().toISOString(),
++  });
++  execWriter.writeState({
++    lastCommandId: commandId,
++    lastCommand: matched.command,
++    status: "queued",
++    updatedAt: new Date().toISOString(),
++  });
++
++  const ack = await withTimeout(
++    Promise.resolve(
++      dispatcher.sendFinalReply({ text: `Stopping... [#${shortCommandId(commandId)}]` }),
++    ),
++    1000,
++    signal,
++  );
++  execWriter.appendEvent({
++    eventId: `evt_${crypto.randomUUID()}`,
++    commandId,
++    seq,
++    agentId,
++    type: "ACK_SENT",
++    at: new Date().toISOString(),
++    data: { ok: ack.ok },
++  });
++
++  const dispatch = await withTimeout(tryFastAbortFromMessage({ ctx, cfg }), 3000, signal);
++  if (!dispatch.ok) {
++    dispatcher.sendFinalReply({
++      text: `Stop failed [#${shortCommandId(commandId)}]: ${dispatch.reason}`,
++    });
++    execWriter.appendEvent({
++      eventId: `evt_${crypto.randomUUID()}`,
++      commandId,
++      seq,
++      agentId,
++      type: "TIMED_OUT",
++      at: new Date().toISOString(),
++      data: { phase: "dispatch", reason: dispatch.reason },
++    });
++    execWriter.writeState({
++      lastCommandId: commandId,
++      lastCommand: matched.command,
++      status: "timed_out",
++      updatedAt: new Date().toISOString(),
++      lastResult: dispatch.reason,
++    });
++    return { handled: true };
++  }
++
++  const finalText = formatAbortReplyText(dispatch.value.stoppedSubagents);
++  dispatcher.sendFinalReply({ text: `${finalText} [#${shortCommandId(commandId)}]` });
++  execWriter.appendEvent({
++    eventId: `evt_${crypto.randomUUID()}`,
++    commandId,
++    seq,
++    agentId,
++    type: "DONE",
++    at: new Date().toISOString(),
++  });
++  execWriter.writeState({
++    lastCommandId: commandId,
++    lastCommand: matched.command,
++    status: "done",
++    updatedAt: new Date().toISOString(),
++    lastResult: finalText,
++  });
++  return { handled: true };
++}
+diff --git a/src/auto-reply/reply/dispatch-from-config.test.ts b/src/auto-reply/reply/dispatch-from-config.test.ts
+index 8c2012872..8dd57ccdf 100644
+--- a/src/auto-reply/reply/dispatch-from-config.test.ts
++++ b/src/auto-reply/reply/dispatch-from-config.test.ts
+@@ -125,6 +125,25 @@ describe("dispatchReplyFromConfig", () => {
+     internalHookMocks.createInternalHookEvent.mockImplementation(createInternalHookEventPayload);
+     internalHookMocks.triggerInternalHook.mockClear();
+   });
++  it("routes /stop through control plane and does not call reply resolver", async () => {
++    setNoAbort();
++    const cfg = emptyConfig;
++    const dispatcher = createDispatcher();
++    const ctx = buildTestCtx({
++      Provider: "whatsapp",
++      Surface: "whatsapp",
++      Body: "/stop",
++      CommandBody: "/stop",
++      CommandAuthorized: true,
++    });
++    const replyResolver = vi.fn(async () => ({ text: "should-not-run" }));
++
++    await dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
++
++    expect(replyResolver).not.toHaveBeenCalled();
++    expect(dispatcher.sendFinalReply).toHaveBeenCalled();
++  });
++
+   it("does not route when Provider matches OriginatingChannel (even if Surface is missing)", async () => {
+     setNoAbort();
+     mocks.routeReply.mockClear();
+diff --git a/src/auto-reply/reply/dispatch-from-config.ts b/src/auto-reply/reply/dispatch-from-config.ts
+index 009fab046..b116c1c11 100644
+--- a/src/auto-reply/reply/dispatch-from-config.ts
++++ b/src/auto-reply/reply/dispatch-from-config.ts
+@@ -13,6 +13,7 @@ import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
+ import { enqueueCommandInLane } from "../../process/command-queue.js";
+ import { CommandLane } from "../../process/lanes.js";
+ import { maybeApplyTtsToPayload, normalizeTtsAutoMode, resolveTtsConfig } from "../../tts/tts.js";
++import { maybeHandleControlPlaneCommand } from "../control-plane.js";
+ import { getReplyFromConfig } from "../reply.js";
+ import type { FinalizedMsgContext } from "../templating.js";
+ import type { GetReplyOptions, ReplyPayload } from "../types.js";
+@@ -205,6 +206,14 @@ export async function dispatchReplyFromConfig(params: {
+     return { queuedFinal: false, counts: dispatcher.getQueuedCounts() };
+   }
+ 
++  const controlHandled = await maybeHandleControlPlaneCommand({ ctx, cfg, dispatcher });
++  if (controlHandled.handled) {
++    const counts = dispatcher.getQueuedCounts();
++    recordProcessed("completed", { reason: "control_plane" });
++    markIdle("message_completed");
++    return { queuedFinal: counts.final > 0, counts };
++  }
++
+   const inboundAudio = isInboundAudioContext(ctx);
+   const sessionTtsAuto = resolveSessionTtsAuto(ctx, cfg);
+   const hookRunner = getGlobalHookRunner();

@@ -16,6 +16,20 @@
   },
   "supported": [
     {
+      "id": "oc-2026.2.22-2-45febecf2a2d",
+      "openclawVersion": "2026.2.22-2",
+      "commitSha": "45febecf2a2d91fd1a378bb2cae38ec21e71857e",
+      "upstreamBaseCommit": "45febecf2a2d91fd1a378bb2cae38ec21e71857e",
+      "overlayHeadCommit": "94f8faaf52d5fff1a21e7b4a4c2765f95e1fdbb7",
+      "patchSetDir": "patches/45febecf2a2d-autocompat",
+      "binaryArtifact": "dist-overlay.tar.gz",
+      "atlasCompat": {
+        "memory_search": "expected",
+        "memory_get": "expected"
+      },
+      "notes": "Auto-candidate generated from rebased overlay patchset for issue #18"
+    },
+    {
       "id": "oc-2026.2.21-2-35a57bc94083",
       "openclawVersion": "2026.2.21-2",
       "commitSha": "35a57bc940833a6c1f594b2308e349e5ee0148db",
