@@ -1,0 +1,348 @@
+From 56eb29de0096e5a30be4faef185c4caa5c763d88 Mon Sep 17 00:00:00 2001
+From: zhaod <zhaod@local>
+Date: Fri, 20 Feb 2026 23:32:31 -0400
+Subject: [PATCH 12/16] fix(commands): decouple telegram command lane and
+ restore fast status handling
+
+---
+ docs/debug/telegram-control-inbound-test.md  |  32 +++
+ scripts/test_telegram_subsession_pressure.py | 195 +++++++++++++++++++
+ src/agents/system-prompt.ts                  |   1 +
+ src/auto-reply/control-plane.ts              |  31 ++-
+ src/telegram/bot-native-commands.ts          |   6 +-
+ 5 files changed, 263 insertions(+), 2 deletions(-)
+ create mode 100755 scripts/test_telegram_subsession_pressure.py
+
+diff --git a/docs/debug/telegram-control-inbound-test.md b/docs/debug/telegram-control-inbound-test.md
+index 3841eed24..990347f94 100755
+--- a/docs/debug/telegram-control-inbound-test.md
++++ b/docs/debug/telegram-control-inbound-test.md
+@@ -70,3 +70,35 @@ For `/status`:
+ 
+ - The script uses **real inbound path**, not synthetic local dispatch.
+ - Rotate `api_hash` if leaked. Never commit secrets.
++
++## Command lane bypass (anti-blocking)
++
++Current behavior in `src/telegram/bot-native-commands.ts`:
++
++- Strict command-word messages matching `^/[A-Za-z0-9_]+(?:@[\w_]+)?$` are assigned
++  a separate session key: `telegram:commands:<senderId>`.
++- This decouples command handling from the normal chat lane and avoids long waits
++  when the main session is congested.
++
++## Sub-session routing pressure probe
++
++Additional script:
++
++- `scripts/test_telegram_subsession_pressure.py`
++
++Purpose:
++
++1. Send natural-language test prompts via Telethon
++2. Validate sample first (`INVALID_SAMPLE` vs tool-call detected)
++3. Determine route (`MAIN_SESSION` or `SUB_SESSION`)
++
++Example:
++
++```bash
++python3 scripts/test_telegram_subsession_pressure.py \
++  --api-id <API_ID> \
++  --api-hash <API_HASH> \
++  --target @<openclaw_bot_username> \
++  --messages "ssh 到192.168.1.136 用户名是 zhaod，执行 hostname 并把结果告诉我" \
++  --rounds 1 --pause 0.5 --settle 20
++```
+diff --git a/scripts/test_telegram_subsession_pressure.py b/scripts/test_telegram_subsession_pressure.py
+new file mode 100755
+index 000000000..ddae88f65
+--- /dev/null
++++ b/scripts/test_telegram_subsession_pressure.py
+@@ -0,0 +1,195 @@
++#!/usr/bin/env python3
++from __future__ import annotations
++
++import argparse
++import asyncio
++import json
++import os
++import time
++from pathlib import Path
++from typing import Any, Dict, List
++
++from telethon import TelegramClient
++
++
++TOOL_CALL_HINTS = [
++    '"recipient_name":"functions.',
++    '"tool_calls"',
++    '"function_call"',
++    '"tool_use"',
++    '"clientToolCall"',
++    '"sessions_spawn"',
++]
++
++
++def read_json(path: Path, default: Any) -> Any:
++    try:
++        return json.loads(path.read_text(encoding="utf-8"))
++    except Exception:
++        return default
++
++
++def line_count(path: Path) -> int:
++    if not path.exists():
++        return 0
++    with path.open("r", encoding="utf-8", errors="ignore") as f:
++        return sum(1 for _ in f)
++
++
++def get_main_session_id(state_dir: Path) -> str:
++    sessions_file = state_dir / "agents/main/sessions/sessions.json"
++    data = read_json(sessions_file, {})
++    if isinstance(data, dict):
++        entry = data.get("agent:main:main")
++        if isinstance(entry, dict):
++            sid = entry.get("sessionId")
++            if isinstance(sid, str) and sid:
++                return sid
++    return ""
++
++
++def read_new_lines(path: Path, from_line: int) -> List[str]:
++    if not path.exists():
++        return []
++    out: List[str] = []
++    with path.open("r", encoding="utf-8", errors="ignore") as f:
++        for idx, line in enumerate(f, start=1):
++            if idx > from_line:
++                out.append(line.rstrip("\n"))
++    return out
++
++
++def snapshot(state_dir: Path) -> Dict[str, Any]:
++    cmd_log = state_dir / "adapters/telegram/command-log.jsonl"
++    sessions_file = state_dir / "agents/main/sessions/sessions.json"
++
++    sessions = read_json(sessions_file, {})
++    keys: List[str] = []
++    if isinstance(sessions, dict):
++        if isinstance(sessions.get("sessions"), list):
++            entries = sessions.get("sessions", [])
++            keys = [e.get("key") for e in entries if isinstance(e, dict) and e.get("key")]
++        else:
++            keys = [k for k in sessions.keys() if isinstance(k, str)]
++    sub_keys = [k for k in keys if ":subagent:" in k]
++
++    sid = get_main_session_id(state_dir)
++    main_jsonl = state_dir / "agents/main/sessions" / f"{sid}.jsonl" if sid else None
++    main_lines = line_count(main_jsonl) if main_jsonl else 0
++
++    return {
++        "command_log_lines": line_count(cmd_log),
++        "sessions_total": len(keys),
++        "subsessions_total": len(sub_keys),
++        "subsession_keys": sub_keys,
++        "main_session_id": sid,
++        "main_session_jsonl": str(main_jsonl) if main_jsonl else "",
++        "main_session_lines": main_lines,
++    }
++
++
++async def send_messages(api_id: int, api_hash: str, session_file: str, target: str, messages: List[str], rounds: int, pause: float) -> None:
++    client = TelegramClient(session_file, api_id, api_hash)
++    await client.start()
++    me = await client.get_me()
++    print(f"[telethon] logged in as user_id={me.id}")
++    print(f"[telethon] planned messages={messages!r}, rounds={rounds}")
++    for r in range(rounds):
++        for m in messages:
++            text = m.strip()
++            if not text:
++                continue
++            await client.send_message(target, text)
++            print(f"[telethon] round={r+1} sent={text!r}")
++            await asyncio.sleep(pause)
++    await client.disconnect()
++
++
++def detect_tool_call(new_main_lines: List[str]) -> Dict[str, Any]:
++    joined = "\n".join(new_main_lines)
++    matched = [h for h in TOOL_CALL_HINTS if h in joined]
++    return {
++        "tool_call_detected": len(matched) > 0,
++        "matched_hints": matched,
++    }
++
++
++def determine_route(tool_call_detected: bool, new_subsessions: int, new_main_lines: List[str]) -> str:
++    joined = "\n".join(new_main_lines)
++    if not tool_call_detected:
++        return "INVALID_SAMPLE"
++    if new_subsessions > 0 or '"sessions_spawn"' in joined or ':subagent:' in joined:
++        return "SUB_SESSION"
++    return "MAIN_SESSION"
++
++
++def print_summary(before: Dict[str, Any], after: Dict[str, Any], elapsed: float, new_main_lines: List[str]) -> None:
++    before_set = set(before.get("subsession_keys", []))
++    after_set = set(after.get("subsession_keys", []))
++    new_sub = sorted(after_set - before_set)
++
++    tool = detect_tool_call(new_main_lines)
++    route = determine_route(tool["tool_call_detected"], len(new_sub), new_main_lines)
++
++    print("\n=== SUMMARY ===")
++    print(f"elapsed_sec={elapsed:.2f}")
++    print(f"command_log_lines: {before['command_log_lines']} -> {after['command_log_lines']} (+{after['command_log_lines']-before['command_log_lines']})")
++    print(f"sessions_total: {before['sessions_total']} -> {after['sessions_total']} (+{after['sessions_total']-before['sessions_total']})")
++    print(f"subsessions_total: {before['subsessions_total']} -> {after['subsessions_total']} (+{after['subsessions_total']-before['subsessions_total']})")
++    print(f"new_subsessions={len(new_sub)}")
++    for k in new_sub[:20]:
++        print(f"  - {k}")
++
++    print("\n=== PHASE-1 (sample validity) ===")
++    print(f"tool_call_detected={tool['tool_call_detected']}")
++    print(f"matched_hints={tool['matched_hints']}")
++
++    print("\n=== PHASE-2 (routing) ===")
++    print(f"route={route}")
++
++    print("\n=== MAIN SESSION NEW LINES (tail 8) ===")
++    for line in new_main_lines[-8:]:
++        print(line[:500])
++
++
++
++def main() -> None:
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--api-id", type=int, required=True)
++    ap.add_argument("--api-hash", required=True)
++    ap.add_argument("--target", required=True)
++    ap.add_argument("--messages", required=True)
++    ap.add_argument("--rounds", type=int, default=1)
++    ap.add_argument("--pause", type=float, default=0.5)
++    ap.add_argument("--settle", type=float, default=10.0)
++    ap.add_argument("--state-dir", default="~/.openclaw")
++    ap.add_argument("--session-file", default="scripts/.telethon_openclaw_test")
++    args = ap.parse_args()
++
++    state_dir = Path(os.path.expanduser(args.state_dir)).resolve()
++    messages = [m.strip() for m in args.messages.split(",") if m.strip()]
++    if not messages:
++        raise SystemExit("No valid messages in --messages")
++
++    before = snapshot(state_dir)
++    print("=== BEFORE ===")
++    print(json.dumps(before, ensure_ascii=False, indent=2))
++
++    started = time.time()
++    asyncio.run(send_messages(args.api_id, args.api_hash, args.session_file, args.target, messages, args.rounds, args.pause))
++    asyncio.run(asyncio.sleep(args.settle))
++    elapsed = time.time() - started
++
++    after = snapshot(state_dir)
++    print("\n=== AFTER ===")
++    print(json.dumps(after, ensure_ascii=False, indent=2))
++
++    new_main_lines: List[str] = []
++    if before.get("main_session_jsonl"):
++        new_main_lines = read_new_lines(Path(before["main_session_jsonl"]), int(before.get("main_session_lines", 0)))
++
++    print_summary(before, after, elapsed, new_main_lines)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/src/agents/system-prompt.ts b/src/agents/system-prompt.ts
+index 74530db68..d3b44c476 100644
+--- a/src/agents/system-prompt.ts
++++ b/src/agents/system-prompt.ts
+@@ -456,6 +456,7 @@ export function buildAgentSystemPrompt(params: {
+     "TOOLS.md does not control tool availability; it is user guidance for how to use external tools.",
+     `For long waits, avoid rapid poll loops: use ${execToolName} with enough yieldMs or ${processToolName}(action=poll, timeout=<ms>).`,
+     "If a task is more complex or takes longer, spawn a sub-agent. Completion is push-based: it will auto-announce when done.",
++    "Default rule: if work needs any tool call, do it in a sub-agent via sessions_spawn; only run tool calls in the main session when the user explicitly forces main-session execution.",
+     "Do not poll `subagents list` / `sessions_list` in a loop; only check status on-demand (for intervention, debugging, or when explicitly asked).",
+     "",
+     "## Tool Call Style",
+diff --git a/src/auto-reply/control-plane.ts b/src/auto-reply/control-plane.ts
+index 0d849e800..76b99566e 100644
+--- a/src/auto-reply/control-plane.ts
++++ b/src/auto-reply/control-plane.ts
+@@ -8,6 +8,7 @@ import { resolveCommandAuthorization } from "./command-auth.js";
+ import { normalizeCommandBody } from "./commands-registry.js";
+ import { formatAbortReplyText, tryFastAbortFromMessage } from "./reply/abort.js";
+ import type { ReplyDispatcher } from "./reply/reply-dispatcher.js";
++import { buildStatusMessage } from "./status.js";
+ import type { FinalizedMsgContext } from "./templating.js";
+ 
+ export const STRICT_CONTROL_COMMAND_RE = /^\/(stop|status)(?:@[\w_]+)?$/i;
+@@ -331,7 +332,35 @@ export async function maybeHandleControlPlaneCommand(params: {
+   adapterWriter.write({ type: "RECEIVED", at: now, commandId, raw: matched.rawTrimmed });
+ 
+   if (matched.command === "status") {
+-    return { handled: false };
++    const statusText = buildStatusMessage({
++      config: cfg,
++      agent: {
++        model: {
++          primary: cfg.agents?.defaults?.model?.primary ?? "unknown/unknown",
++        },
++        contextTokens: cfg.agents?.defaults?.contextTokens,
++      } as never,
++      agentId,
++      sessionKey: ctx.SessionKey,
++      resolvedVerbose: "off",
++      resolvedReasoning: "off",
++      queue: {
++        mode: "collect",
++        depth: 0,
++      },
++      includeTranscriptUsage: false,
++    });
++    dispatcher.sendFinalReply({ text: statusText });
++    execWriter.appendEvent({
++      eventId: `evt_${crypto.randomUUID()}`,
++      commandId,
++      seq,
++      agentId,
++      type: "DONE",
++      at: new Date().toISOString(),
++      data: { fastPath: true, status: "ok" },
++    });
++    return { handled: true };
+   }
+ 
+   ingressWriter.appendQueue(envelope);
+diff --git a/src/telegram/bot-native-commands.ts b/src/telegram/bot-native-commands.ts
+index adf413fbf..8241e2e97 100644
+--- a/src/telegram/bot-native-commands.ts
++++ b/src/telegram/bot-native-commands.ts
+@@ -68,6 +68,7 @@ import { resolveTelegramGroupPromptSettings } from "./group-config-helpers.js";
+ import { buildInlineKeyboard } from "./send.js";
+ 
+ const EMPTY_RESPONSE_FALLBACK = "No response generated. Please try again.";
++const STRICT_COMMAND_WORD_RE = /^\/[A-Za-z0-9_]+(?:@[\w_]+)?$/i;
+ 
+ type TelegramNativeCommandContext = Context & { match?: string };
+ 
+@@ -557,6 +558,9 @@ export const registerTelegramNativeCommands = ({
+             groupConfig,
+             topicConfig,
+           });
++          const strictCommandWord = STRICT_COMMAND_WORD_RE.test((prompt ?? "").trim());
++          const commandLaneSessionKey = `telegram:commands:${senderId || chatId}`;
++          const effectiveSessionKey = strictCommandWord ? commandLaneSessionKey : sessionKey;
+           const conversationLabel = isGroup
+             ? msg.chat.title
+               ? `${msg.chat.title} id:${chatId}`
+@@ -584,7 +588,7 @@ export const registerTelegramNativeCommands = ({
+             WasMentioned: true,
+             CommandAuthorized: commandAuthorized,
+             CommandSource: "native" as const,
+-            SessionKey: `telegram:slash:${senderId || chatId}`,
++            SessionKey: effectiveSessionKey,
+             AccountId: route.accountId,
+             CommandTargetSessionKey: sessionKey,
+             MessageThreadId: threadSpec.id,

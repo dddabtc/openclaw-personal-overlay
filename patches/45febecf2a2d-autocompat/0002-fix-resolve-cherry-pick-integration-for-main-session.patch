@@ -1,0 +1,79 @@
+From a91b855c9c0871b691624042b41513606c0a3233 Mon Sep 17 00:00:00 2001
+From: zhaod <zhaod@local>
+Date: Fri, 20 Feb 2026 04:23:12 -0400
+Subject: [PATCH 02/16] fix: resolve cherry-pick integration for main-session
+ exec policy
+
+---
+ src/agents/pi-tools.ts | 14 +-------------
+ src/config/schema.ts   | 25 -------------------------
+ 2 files changed, 1 insertion(+), 38 deletions(-)
+
+diff --git a/src/agents/pi-tools.ts b/src/agents/pi-tools.ts
+index c6919e4b2..b68abfa4d 100644
+--- a/src/agents/pi-tools.ts
++++ b/src/agents/pi-tools.ts
+@@ -120,6 +120,7 @@ function resolveExecConfig(params: { cfg?: OpenClawConfig; agentId?: string }) {
+     notifyOnExitEmptySuccess:
+       agentExec?.notifyOnExitEmptySuccess ?? globalExec?.notifyOnExitEmptySuccess,
+     applyPatch: agentExec?.applyPatch ?? globalExec?.applyPatch,
++    mainSessionPolicy: cfg?.sessionPolicies?.main,
+   };
+ }
+ 
+@@ -157,19 +158,6 @@ export function resolveToolLoopDetectionConfig(params: {
+       ...global.detectors,
+       ...agent.detectors,
+     },
+-    host: globalExec?.host,
+-    security: globalExec?.security,
+-    ask: globalExec?.ask,
+-    node: globalExec?.node,
+-    pathPrepend: globalExec?.pathPrepend,
+-    safeBins: globalExec?.safeBins,
+-    backgroundMs: globalExec?.backgroundMs,
+-    timeoutSec: globalExec?.timeoutSec,
+-    approvalRunningNoticeMs: globalExec?.approvalRunningNoticeMs,
+-    cleanupMs: globalExec?.cleanupMs,
+-    notifyOnExit: globalExec?.notifyOnExit,
+-    applyPatch: globalExec?.applyPatch,
+-    mainSessionPolicy: cfg?.sessionPolicies?.main,
+   };
+ }
+ 
+diff --git a/src/config/schema.ts b/src/config/schema.ts
+index f30e4db02..024e8a6b9 100644
+--- a/src/config/schema.ts
++++ b/src/config/schema.ts
+@@ -824,31 +824,6 @@ function mergeObjectSchema(base: JsonSchemaObject, extension: JsonSchemaObject):
+   return merged;
+ }
+ 
+-export type ConfigSchemaResponse = {
+-  schema: ConfigSchema;
+-  uiHints: ConfigUiHints;
+-  version: string;
+-  generatedAt: string;
+-};
+-
+-export type PluginUiMetadata = {
+-  id: string;
+-  name?: string;
+-  description?: string;
+-  configUiHints?: Record<
+-    string,
+-    Pick<ConfigUiHint, "label" | "help" | "tags" | "advanced" | "sensitive" | "placeholder">
+-  >;
+-  configSchema?: JsonSchemaNode;
+-};
+-
+-export type ChannelUiMetadata = {
+-  id: string;
+-  label?: string;
+-  description?: string;
+-  configSchema?: JsonSchemaNode;
+-  configUiHints?: Record<string, ConfigUiHint>;
+-};
+ 
+ function collectExtensionHintKeys(
+   hints: ConfigUiHints,

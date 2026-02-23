@@ -1,0 +1,756 @@
+From cebdabb7de11333b6516f284188bdafe052acdc9 Mon Sep 17 00:00:00 2001
+From: zhaod <zhaod@local>
+Date: Fri, 20 Feb 2026 22:02:05 -0400
+Subject: [PATCH 11/16] feat(control): unify command handling and add real
+ telegram inbound test script/docs
+
+---
+ docs/debug/telegram-control-inbound-test.md   |  72 +++++++
+ scripts/test_telegram_control_inbound.py      | 133 +++++++++++++
+ src/auto-reply/control-plane.ts               | 184 ++++++++++++------
+ .../reply/dispatch-from-config.test.ts        |  19 +-
+ src/auto-reply/reply/dispatch-from-config.ts  | 152 +--------------
+ src/auto-reply/status.ts                      |  12 ++
+ 6 files changed, 355 insertions(+), 217 deletions(-)
+ create mode 100755 docs/debug/telegram-control-inbound-test.md
+ create mode 100755 scripts/test_telegram_control_inbound.py
+
+diff --git a/docs/debug/telegram-control-inbound-test.md b/docs/debug/telegram-control-inbound-test.md
+new file mode 100755
+index 000000000..3841eed24
+--- /dev/null
++++ b/docs/debug/telegram-control-inbound-test.md
+@@ -0,0 +1,72 @@
++# Telegram Control Inbound Test (Real User via Telethon)
++
++This document explains how to run a **real inbound** `/status` + `/stop` test against OpenClaw Telegram control handling.
++
++## Why this exists
++
++`bot -> bot` messaging is not reliable for Telegram command testing.
++Use a **user account session** (Telethon) to send commands to the OpenClaw bot.
++
++## Script location
++
++- `scripts/test_telegram_control_inbound.py`
++
++## Prerequisites
++
++1. Telegram `api_id` + `api_hash` from `https://my.telegram.org`
++2. Test user id added to allowlist:
++
++```bash
++openclaw config set channels.telegram.allowFrom '["<owner_id>","<test_user_id>"]'
++systemctl --user restart openclaw-gateway.service
++```
++
++## Run
++
++```bash
++cd ~/openclaw-src
++python3 -m venv .venv
++source .venv/bin/activate
++pip install telethon
++
++python3 scripts/test_telegram_control_inbound.py \
++  --api-id <API_ID> \
++  --api-hash <API_HASH> \
++  --target @<openclaw_bot_username> \
++  --messages "/status,/stop"
++```
++
++First run will prompt for phone/code/2FA and persist a local Telethon session file.
++
++## Expected output
++
++The script prints:
++
++1. `BEFORE` snapshot of control files
++2. Sent command logs (`[telethon] sent: ...`)
++3. `AFTER` snapshot
++4. `DELTA` counters
++5. Tail snippets for:
++   - `~/.openclaw/adapters/telegram/command-log.jsonl`
++   - `~/.openclaw/agents/main/control-queue.jsonl`
++   - `~/.openclaw/agents/main/control-events.jsonl`
++   - `~/.openclaw/agents/main/control-state.json`
++
++## Pass criteria
++
++For `/stop`:
++
++- command-log has new `/stop` entry
++- queue gets a new record
++- events include: `ENQUEUED -> ACK_SENT -> DONE`
++- control-state updates with latest command id
++
++For `/status`:
++
++- command-log has new `/status` entry
++- response behavior follows current configured routing (native/control-plane)
++
++## Notes
++
++- The script uses **real inbound path**, not synthetic local dispatch.
++- Rotate `api_hash` if leaked. Never commit secrets.
+diff --git a/scripts/test_telegram_control_inbound.py b/scripts/test_telegram_control_inbound.py
+new file mode 100755
+index 000000000..4a89f3c32
+--- /dev/null
++++ b/scripts/test_telegram_control_inbound.py
+@@ -0,0 +1,133 @@
++#!/usr/bin/env python3
++"""
++Real inbound control command smoke test via Telethon (user session, NOT bot token).
++
++Usage:
++  python scripts/test_telegram_control_inbound.py \
++    --api-id 123456 \
++    --api-hash abcdef... \
++    --target @your_openclaw_bot \
++    --state-dir ~/.openclaw
++
++Optional:
++  --messages "/status,/stop"
++  --pause 1.0
++  --session-file scripts/.telethon_openclaw_test
++
++What it does:
++1) Captures before-counts of control-plane files
++2) Sends commands to OpenClaw Telegram bot as a real user account
++3) Waits briefly and captures after-counts
++4) Prints deltas + tail snippets
++"""
++
++from __future__ import annotations
++
++import argparse
++import asyncio
++import json
++import os
++from pathlib import Path
++from typing import Dict, List
++
++from telethon import TelegramClient
++
++TRACK_FILES = [
++    "adapters/telegram/command-log.jsonl",
++    "agents/main/control-queue.jsonl",
++    "agents/main/control-events.jsonl",
++    "agents/main/control-state.json",
++]
++
++
++def file_info(path: Path) -> Dict[str, object]:
++    if not path.exists():
++        return {"exists": False, "lines": 0, "size": 0}
++    size = path.stat().st_size
++    if path.suffix == ".json" and path.name == "control-state.json":
++        return {"exists": True, "lines": 1, "size": size}
++    try:
++        with path.open("r", encoding="utf-8") as f:
++            lines = sum(1 for _ in f)
++    except Exception:
++        lines = 0
++    return {"exists": True, "lines": lines, "size": size}
++
++
++def snapshot(state_dir: Path) -> Dict[str, Dict[str, object]]:
++    return {rel: file_info(state_dir / rel) for rel in TRACK_FILES}
++
++
++def tail(path: Path, n: int = 8) -> List[str]:
++    if not path.exists():
++        return ["<missing>"]
++    try:
++        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
++        return lines[-n:] if lines else ["<empty>"]
++    except Exception as e:
++        return [f"<read error: {e}>"]
++
++
++async def send_commands(api_id: int, api_hash: str, session_file: str, target: str, messages: List[str], pause: float) -> None:
++    client = TelegramClient(session_file, api_id, api_hash)
++    await client.start()  # first run will prompt for phone/code/2FA
++    me = await client.get_me()
++    print(f"[telethon] logged in as user_id={me.id}")
++    print(f"[telethon] planned messages: {messages!r}")
++    for m in messages:
++        text = m.strip()
++        if not text:
++            continue
++        await client.send_message(target, text)
++        print(f"[telethon] sent: {text!r}")
++        await asyncio.sleep(pause)
++    await client.disconnect()
++
++
++def print_delta(before: Dict[str, Dict[str, object]], after: Dict[str, Dict[str, object]]) -> None:
++    print("\n=== DELTA ===")
++    for rel in TRACK_FILES:
++        b = before[rel]
++        a = after[rel]
++        print(
++            f"{rel}: exists {b['exists']} -> {a['exists']}, "
++            f"lines {b['lines']} -> {a['lines']}, size {b['size']} -> {a['size']}"
++        )
++
++
++def main() -> None:
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--api-id", type=int, required=True)
++    ap.add_argument("--api-hash", required=True)
++    ap.add_argument("--target", required=True, help="@bot_username or numeric peer id")
++    ap.add_argument("--state-dir", default="~/.openclaw")
++    ap.add_argument("--messages", default="/status,/stop")
++    ap.add_argument("--pause", type=float, default=1.0)
++    ap.add_argument("--settle", type=float, default=3.0, help="wait seconds after sending before sampling after-state")
++    ap.add_argument("--session-file", default="scripts/.telethon_openclaw_test")
++    args = ap.parse_args()
++
++    state_dir = Path(os.path.expanduser(args.state_dir)).resolve()
++    before = snapshot(state_dir)
++    print("=== BEFORE ===")
++    print(json.dumps(before, ensure_ascii=False, indent=2))
++
++    messages = [m.strip() for m in args.messages.split(",") if m.strip()]
++    asyncio.run(send_commands(args.api_id, args.api_hash, args.session_file, args.target, messages, args.pause))
++    asyncio.run(asyncio.sleep(args.settle))
++
++    after = snapshot(state_dir)
++    print("\n=== AFTER ===")
++    print(json.dumps(after, ensure_ascii=False, indent=2))
++    print_delta(before, after)
++
++    print("\n=== TAILS ===")
++    for rel in TRACK_FILES:
++        p = state_dir / rel
++        print(f"\n--- {rel} ---")
++        for line in tail(p, n=8):
++            print(line)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/src/auto-reply/control-plane.ts b/src/auto-reply/control-plane.ts
+index 1026da30c..0d849e800 100644
+--- a/src/auto-reply/control-plane.ts
++++ b/src/auto-reply/control-plane.ts
+@@ -5,6 +5,7 @@ import { resolveSessionAgentId } from "../agents/agent-scope.js";
+ import type { OpenClawConfig } from "../config/config.js";
+ import { resolveStateDir } from "../config/paths.js";
+ import { resolveCommandAuthorization } from "./command-auth.js";
++import { normalizeCommandBody } from "./commands-registry.js";
+ import { formatAbortReplyText, tryFastAbortFromMessage } from "./reply/abort.js";
+ import type { ReplyDispatcher } from "./reply/reply-dispatcher.js";
+ import type { FinalizedMsgContext } from "./templating.js";
+@@ -25,6 +26,17 @@ type ControlEnvelope = {
+   raw: string;
+   ingressAt: string;
+   deadlineMs: number;
++  context?: {
++    from?: string;
++    to?: string;
++    provider?: string;
++    surface?: string;
++    chatType?: string;
++    commandAuthorized?: boolean;
++    senderId?: string;
++    senderName?: string;
++    senderUsername?: string;
++  };
+ };
+ 
+ type ControlState = {
+@@ -42,15 +54,11 @@ export function matchStrictControlCommand(
+   if (!rawTrimmed) {
+     return null;
+   }
+-  const m = rawTrimmed.match(STRICT_CONTROL_COMMAND_RE);
+-  if (!m) {
+-    return null;
+-  }
+-  const command = m[1]?.toLowerCase();
+-  if (command !== "stop" && command !== "status") {
++  const normalized = normalizeCommandBody(rawTrimmed);
++  if (normalized !== "/stop" && normalized !== "/status") {
+     return null;
+   }
+-  return { command, rawTrimmed };
++  return { command: normalized.slice(1) as ControlCommand, rawTrimmed };
+ }
+ 
+ function appendJsonl(filePath: string, record: unknown): void {
+@@ -139,6 +147,92 @@ async function withTimeout<T>(
+   });
+ }
+ 
++const agentControlChains = new Map<string, Promise<void>>();
++function enqueueAgentControl<T>(agentId: string, run: () => Promise<T>): Promise<T> {
++  const previous = agentControlChains.get(agentId) ?? Promise.resolve();
++  const chained = previous.catch(() => {}).then(run);
++  agentControlChains.set(
++    agentId,
++    chained.then(
++      () => undefined,
++      () => undefined,
++    ),
++  );
++  return chained;
++}
++
++function buildReplayContext(envelope: ControlEnvelope): FinalizedMsgContext {
++  return {
++    SessionKey: envelope.sessionId,
++    CommandTargetSessionKey: envelope.sessionId,
++    Body: envelope.raw,
++    RawBody: envelope.raw,
++    CommandBody: envelope.raw,
++    Provider: envelope.context?.provider ?? envelope.adapter,
++    Surface: envelope.context?.surface ?? envelope.adapter,
++    From: envelope.context?.from ?? envelope.chatId,
++    To: envelope.context?.to ?? envelope.chatId,
++    ChatType: envelope.context?.chatType,
++    SenderId: envelope.context?.senderId ?? envelope.senderId,
++    SenderName: envelope.context?.senderName,
++    SenderUsername: envelope.context?.senderUsername,
++    CommandAuthorized: envelope.context?.commandAuthorized ?? true,
++  } as FinalizedMsgContext;
++}
++
++async function executeStopEnvelope(params: {
++  envelope: ControlEnvelope;
++  cfg: OpenClawConfig;
++  stateDir: string;
++  signal?: AbortSignal;
++}): Promise<{ ok: true; finalText: string } | { ok: false; reason: "timeout" | "aborted" }> {
++  const { envelope, cfg, stateDir, signal } = params;
++  const execWriter = new AgentControlExecutorWriter(envelope.agentId, stateDir);
++
++  const dispatch = await withTimeout(
++    tryFastAbortFromMessage({ ctx: buildReplayContext(envelope), cfg }),
++    3000,
++    signal,
++  );
++  if (!dispatch.ok) {
++    execWriter.appendEvent({
++      eventId: `evt_${crypto.randomUUID()}`,
++      commandId: envelope.commandId,
++      seq: envelope.seq,
++      agentId: envelope.agentId,
++      type: "TIMED_OUT",
++      at: new Date().toISOString(),
++      data: { phase: "dispatch", reason: dispatch.reason },
++    });
++    execWriter.writeState({
++      lastCommandId: envelope.commandId,
++      lastCommand: "stop",
++      status: "timed_out",
++      updatedAt: new Date().toISOString(),
++      lastResult: dispatch.reason,
++    });
++    return { ok: false, reason: dispatch.reason };
++  }
++
++  const finalText = formatAbortReplyText(dispatch.value.stoppedSubagents);
++  execWriter.appendEvent({
++    eventId: `evt_${crypto.randomUUID()}`,
++    commandId: envelope.commandId,
++    seq: envelope.seq,
++    agentId: envelope.agentId,
++    type: "DONE",
++    at: new Date().toISOString(),
++  });
++  execWriter.writeState({
++    lastCommandId: envelope.commandId,
++    lastCommand: "stop",
++    status: "done",
++    updatedAt: new Date().toISOString(),
++    lastResult: finalText,
++  });
++  return { ok: true, finalText };
++}
++
+ function recoverNonTerminalCommands(agentId: string, stateDir: string): void {
+   const queueFile = path.join(stateDir, "agents", agentId, "control-queue.jsonl");
+   const eventsFile = path.join(stateDir, "agents", agentId, "control-events.jsonl");
+@@ -217,6 +311,17 @@ export async function maybeHandleControlPlaneCommand(params: {
+     raw: matched.rawTrimmed,
+     ingressAt: now,
+     deadlineMs: matched.command === "status" ? 1000 : 3000,
++    context: {
++      from: ctx.From,
++      to: ctx.To,
++      provider: ctx.Provider,
++      surface: ctx.Surface,
++      chatType: ctx.ChatType,
++      commandAuthorized: ctx.CommandAuthorized,
++      senderId: ctx.SenderId,
++      senderName: ctx.SenderName,
++      senderUsername: ctx.SenderUsername,
++    },
+   };
+ 
+   const adapterWriter = new AdapterCommandLogWriter(adapter, stateDir);
+@@ -226,21 +331,7 @@ export async function maybeHandleControlPlaneCommand(params: {
+   adapterWriter.write({ type: "RECEIVED", at: now, commandId, raw: matched.rawTrimmed });
+ 
+   if (matched.command === "status") {
+-    const statusResult = await withTimeout(Promise.resolve(execWriter.readState()), 1000, signal);
+-    const text = statusResult.ok
+-      ? `Status#${shortCommandId(commandId)}: ${statusResult.value.status ?? "idle"}`
+-      : `Status#${shortCommandId(commandId)}: timeout`;
+-    dispatcher.sendFinalReply({ text });
+-    execWriter.appendEvent({
+-      eventId: `evt_${crypto.randomUUID()}`,
+-      commandId,
+-      seq,
+-      agentId,
+-      type: "DONE",
+-      at: new Date().toISOString(),
+-      data: { fastPath: true, status: statusResult.ok ? "ok" : statusResult.reason },
+-    });
+-    return { handled: true };
++    return { handled: false };
+   }
+ 
+   ingressWriter.appendQueue(envelope);
+@@ -275,47 +366,24 @@ export async function maybeHandleControlPlaneCommand(params: {
+     at: new Date().toISOString(),
+     data: { ok: ack.ok },
+   });
++  execWriter.writeState({
++    lastCommandId: commandId,
++    lastCommand: matched.command,
++    status: "ack_sent",
++    updatedAt: new Date().toISOString(),
++  });
+ 
+-  const dispatch = await withTimeout(tryFastAbortFromMessage({ ctx, cfg }), 3000, signal);
+-  if (!dispatch.ok) {
++  const executeResult = await enqueueAgentControl(agentId, async () =>
++    executeStopEnvelope({ envelope, cfg, stateDir, signal }),
++  );
++
++  if (!executeResult.ok) {
+     dispatcher.sendFinalReply({
+-      text: `Stop failed [#${shortCommandId(commandId)}]: ${dispatch.reason}`,
+-    });
+-    execWriter.appendEvent({
+-      eventId: `evt_${crypto.randomUUID()}`,
+-      commandId,
+-      seq,
+-      agentId,
+-      type: "TIMED_OUT",
+-      at: new Date().toISOString(),
+-      data: { phase: "dispatch", reason: dispatch.reason },
+-    });
+-    execWriter.writeState({
+-      lastCommandId: commandId,
+-      lastCommand: matched.command,
+-      status: "timed_out",
+-      updatedAt: new Date().toISOString(),
+-      lastResult: dispatch.reason,
++      text: `Stop failed [#${shortCommandId(commandId)}]: ${executeResult.reason}`,
+     });
+     return { handled: true };
+   }
+ 
+-  const finalText = formatAbortReplyText(dispatch.value.stoppedSubagents);
+-  dispatcher.sendFinalReply({ text: `${finalText} [#${shortCommandId(commandId)}]` });
+-  execWriter.appendEvent({
+-    eventId: `evt_${crypto.randomUUID()}`,
+-    commandId,
+-    seq,
+-    agentId,
+-    type: "DONE",
+-    at: new Date().toISOString(),
+-  });
+-  execWriter.writeState({
+-    lastCommandId: commandId,
+-    lastCommand: matched.command,
+-    status: "done",
+-    updatedAt: new Date().toISOString(),
+-    lastResult: finalText,
+-  });
++  dispatcher.sendFinalReply({ text: `${executeResult.finalText} [#${shortCommandId(commandId)}]` });
+   return { handled: true };
+ }
+diff --git a/src/auto-reply/reply/dispatch-from-config.test.ts b/src/auto-reply/reply/dispatch-from-config.test.ts
+index 8dd57ccdf..1ed22c73d 100644
+--- a/src/auto-reply/reply/dispatch-from-config.test.ts
++++ b/src/auto-reply/reply/dispatch-from-config.test.ts
+@@ -73,7 +73,8 @@ vi.mock("../../hooks/internal-hooks.js", () => ({
+   triggerInternalHook: internalHookMocks.triggerInternalHook,
+ }));
+ 
+-const { dispatchReplyFromConfig, matchStrictControlCommand } = await import("./dispatch-from-config.js");
++const { dispatchReplyFromConfig, matchStrictControlCommand } =
++  await import("./dispatch-from-config.js");
+ const { resetInboundDedupe } = await import("./inbound-dedupe.js");
+ 
+ const noAbortResult = { handled: false, aborted: false } as const;
+@@ -574,7 +575,7 @@ describe("dispatchReplyFromConfig", () => {
+     expect(matchStrictControlCommand("/stop please")).toBeNull();
+   });
+ 
+-  it("handles /status in control lane without invoking model resolver", async () => {
++  it("routes /status through regular command handling when control-plane fast path is disabled", async () => {
+     setNoAbort();
+     const dispatcher = createDispatcher();
+     const ctx = buildTestCtx({
+@@ -584,13 +585,16 @@ describe("dispatchReplyFromConfig", () => {
+       RawBody: "/status",
+       Body: "/status",
+     });
+-    const replyResolver = vi.fn(async () => {
+-      throw new Error("model unavailable");
+-    });
++    const replyResolver = vi.fn(async () => ({ text: "ok" }) as ReplyPayload);
+ 
+-    const result = await dispatchReplyFromConfig({ ctx, cfg: emptyConfig, dispatcher, replyResolver });
++    const result = await dispatchReplyFromConfig({
++      ctx,
++      cfg: emptyConfig,
++      dispatcher,
++      replyResolver,
++    });
+ 
+-    expect(replyResolver).not.toHaveBeenCalled();
++    expect(replyResolver).toHaveBeenCalled();
+     expect(dispatcher.sendFinalReply).toHaveBeenCalled();
+     expect(result.queuedFinal).toBe(true);
+   });
+@@ -615,5 +619,4 @@ describe("dispatchReplyFromConfig", () => {
+     expect(String(calls[0]?.[0]?.text ?? "")).toContain("Stopping");
+     expect(String(calls[calls.length - 1]?.[0]?.text ?? "")).toContain("timeout");
+   }, 10000);
+-
+ });
+diff --git a/src/auto-reply/reply/dispatch-from-config.ts b/src/auto-reply/reply/dispatch-from-config.ts
+index db8542f68..e21fbc0dd 100644
+--- a/src/auto-reply/reply/dispatch-from-config.ts
++++ b/src/auto-reply/reply/dispatch-from-config.ts
+@@ -3,15 +3,13 @@ import type { OpenClawConfig } from "../../config/config.js";
+ import { loadSessionStore, resolveStorePath } from "../../config/sessions.js";
+ import { logVerbose } from "../../globals.js";
+ import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
+-import { emitDiagnosticEvent, isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
++import { isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
+ import {
+   logMessageProcessed,
+   logMessageQueued,
+   logSessionStateChange,
+ } from "../../logging/diagnostic.js";
+ import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
+-import { enqueueCommandInLane } from "../../process/command-queue.js";
+-import { CommandLane } from "../../process/lanes.js";
+ import { maybeApplyTtsToPayload, normalizeTtsAutoMode, resolveTtsConfig } from "../../tts/tts.js";
+ import { maybeHandleControlPlaneCommand } from "../control-plane.js";
+ import { getReplyFromConfig } from "../reply.js";
+@@ -58,8 +56,6 @@ const isInboundAudioContext = (ctx: FinalizedMsgContext): boolean => {
+ };
+ 
+ const STRICT_CONTROL_COMMAND_RE = /^\s*\/(stop|status)(?:@[\w_]+)?\s*$/i;
+-const CONTROL_ACK_TIMEOUT_MS = 1_000;
+-const CONTROL_ABORT_DISPATCH_TIMEOUT_MS = 3_000;
+ 
+ export function matchStrictControlCommand(text?: string): "stop" | "status" | null {
+   if (!text) {
+@@ -73,46 +69,6 @@ export function matchStrictControlCommand(text?: string): "stop" | "status" | nu
+   return command === "stop" || command === "status" ? command : null;
+ }
+ 
+-function createAbortError(): Error {
+-  const err = new Error("control command aborted");
+-  err.name = "AbortError";
+-  return err;
+-}
+-
+-async function runWithTimeout<T>(params: {
+-  timeoutMs: number;
+-  signal?: AbortSignal;
+-  run: (signal: AbortSignal) => Promise<T>;
+-}): Promise<T> {
+-  if (params.signal?.aborted) {
+-    throw createAbortError();
+-  }
+-  const controller = new AbortController();
+-  const onAbort = () => controller.abort();
+-  params.signal?.addEventListener("abort", onAbort, { once: true });
+-  const timeout = setTimeout(() => controller.abort(), params.timeoutMs);
+-  try {
+-    const runPromise = params.run(controller.signal);
+-    const abortPromise = new Promise<never>((_, reject) => {
+-      controller.signal.addEventListener(
+-        "abort",
+-        () => {
+-          if (params.signal?.aborted) {
+-            reject(createAbortError());
+-            return;
+-          }
+-          reject(new Error(`timeout ${params.timeoutMs}ms`));
+-        },
+-        { once: true },
+-      );
+-    });
+-    return await Promise.race([runPromise, abortPromise]);
+-  } finally {
+-    clearTimeout(timeout);
+-    params.signal?.removeEventListener("abort", onAbort);
+-  }
+-}
+-
+ const resolveSessionTtsAuto = (
+   ctx: FinalizedMsgContext,
+   cfg: OpenClawConfig,
+@@ -342,112 +298,6 @@ export async function dispatchReplyFromConfig(params: {
+     }
+   };
+ 
+-  const ingressBody = ctx.CommandBody ?? ctx.RawBody ?? ctx.Body;
+-  const strictControlCommand = matchStrictControlCommand(ingressBody);
+-  if (strictControlCommand) {
+-    emitDiagnosticEvent({
+-      type: "command_ingress",
+-      sessionKey: ctx.SessionKey,
+-      command: strictControlCommand,
+-    });
+-
+-    const controlResult = await enqueueCommandInLane(CommandLane.Control, async () => {
+-      emitDiagnosticEvent({
+-        type: "control_dequeue",
+-        sessionKey: ctx.SessionKey,
+-        command: strictControlCommand,
+-      });
+-
+-      const emitPayload = async (payload: ReplyPayload, signal?: AbortSignal): Promise<boolean> => {
+-        if (shouldRouteToOriginating && originatingChannel && originatingTo) {
+-          const result = await routeReply({
+-            payload,
+-            channel: originatingChannel,
+-            to: originatingTo,
+-            sessionKey: ctx.SessionKey,
+-            accountId: ctx.AccountId,
+-            threadId: ctx.MessageThreadId,
+-            cfg,
+-            abortSignal: signal,
+-          });
+-          return result.ok;
+-        }
+-        return dispatcher.sendFinalReply(payload);
+-      };
+-
+-      let queuedFinal = false;
+-      const counts = dispatcher.getQueuedCounts();
+-
+-      if (strictControlCommand === "stop") {
+-        const ackOk = await runWithTimeout({
+-          timeoutMs: CONTROL_ACK_TIMEOUT_MS,
+-          run: (signal) => emitPayload({ text: "Stopping..." }, signal),
+-        });
+-        if (ackOk) {
+-          counts.final += 1;
+-          emitDiagnosticEvent({
+-            type: "ack_sent",
+-            sessionKey: ctx.SessionKey,
+-            command: "stop",
+-          });
+-        }
+-
+-        try {
+-          const fastAbort = await runWithTimeout({
+-            timeoutMs: CONTROL_ABORT_DISPATCH_TIMEOUT_MS,
+-            run: () => tryFastAbortFromMessage({ ctx, cfg }),
+-          });
+-          emitDiagnosticEvent({
+-            type: "abort_dispatched",
+-            sessionKey: ctx.SessionKey,
+-            command: "stop",
+-            handled: fastAbort.handled,
+-          });
+-          const doneText = fastAbort.handled
+-            ? formatAbortReplyText(fastAbort.stoppedSubagents)
+-            : "⚠️ Stop request was not applied (not authorized or no active target).";
+-          queuedFinal = await emitPayload({ text: doneText });
+-          if (queuedFinal) {
+-            counts.final += 1;
+-          }
+-        } catch (err) {
+-          const reason = String(err);
+-          queuedFinal = await emitPayload({
+-            text: `⚠️ Stop failed: ${reason.includes("timeout") ? "abort dispatch timeout (3s)" : reason}`,
+-          });
+-          if (queuedFinal) {
+-            counts.final += 1;
+-          }
+-        }
+-
+-        return { queuedFinal, counts };
+-      }
+-
+-      const statusOk = await runWithTimeout({
+-        timeoutMs: CONTROL_ACK_TIMEOUT_MS,
+-        run: (signal) =>
+-          emitPayload(
+-            {
+-              text: "✅ Status: control plane is responsive.",
+-            },
+-            signal,
+-          ),
+-      });
+-      if (statusOk) {
+-        counts.final += 1;
+-        emitDiagnosticEvent({
+-          type: "status_replied",
+-          sessionKey: ctx.SessionKey,
+-          command: "status",
+-        });
+-      }
+-      return { queuedFinal: statusOk, counts };
+-    });
+-
+-    recordProcessed("completed", { reason: `control_${strictControlCommand}` });
+-    return controlResult;
+-  }
+-
+   markProcessing();
+ 
+   try {
+diff --git a/src/auto-reply/status.ts b/src/auto-reply/status.ts
+index 399997ea2..fde94242f 100644
+--- a/src/auto-reply/status.ts
++++ b/src/auto-reply/status.ts
+@@ -57,6 +57,16 @@ type AgentConfig = Partial<AgentDefaults> & {
+ 
+ export const formatTokenCount = formatTokenCountShared;
+ 
++function resolveDistPublishDateTime(): string {
++  try {
++    const stat = fs.statSync(new URL(import.meta.url));
++    const d = new Date(stat.mtimeMs);
++    return `${d.toISOString().slice(0, 19).replace("T", " ")}(UTC)`;
++  } catch {
++    return "unknown";
++  }
++}
++
+ type QueueStatus = {
+   mode?: string;
+   depth?: number;
+@@ -617,6 +627,7 @@ export function buildStatusMessage(args: StatusArgs): string {
+     : null;
+   const commit = resolveCommitHash();
+   const versionLine = `🦞 OpenClaw ${VERSION}${commit ? ` (${commit})` : ""}`;
++  const personalLine = `🏷️ PERSONAL BUILD · ${resolveDistPublishDateTime()}`;
+   const usagePair = formatUsagePair(inputTokens, outputTokens);
+   const cacheLine = formatCacheLine(inputTokens, cacheRead, cacheWrite);
+   const costLine = costLabel ? `💵 Cost: ${costLabel}` : null;
+@@ -627,6 +638,7 @@ export function buildStatusMessage(args: StatusArgs): string {
+ 
+   return [
+     versionLine,
++    personalLine,
+     args.timeLine,
+     modelLine,
+     fallbackLine,

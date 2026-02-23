@@ -1,0 +1,64 @@
+From 6ef8136fc2f3741c0ba967c0949c9f9572e85365 Mon Sep 17 00:00:00 2001
+From: dddabtc <zhaodali78@gmail.com>
+Date: Fri, 20 Feb 2026 17:22:09 -0400
+Subject: [PATCH 09/16] fix(control-plane): align control-lane status/timeout
+ semantics
+
+---
+ src/auto-reply/control-plane.test.ts         | 6 +++++-
+ src/auto-reply/control-plane.ts              | 3 ---
+ src/auto-reply/reply/dispatch-from-config.ts | 3 +--
+ 3 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/src/auto-reply/control-plane.test.ts b/src/auto-reply/control-plane.test.ts
+index a37010d67..0f4967554 100644
+--- a/src/auto-reply/control-plane.test.ts
++++ b/src/auto-reply/control-plane.test.ts
+@@ -44,7 +44,11 @@ describe("maybeHandleControlPlaneCommand", () => {
+   const originalStateDir = process.env.OPENCLAW_STATE_DIR;
+   beforeEach(() => {
+     abortMock.mockClear();
+-    process.env.OPENCLAW_STATE_DIR = originalStateDir;
++    if (typeof originalStateDir === "string") {
++      process.env.OPENCLAW_STATE_DIR = originalStateDir;
++    } else {
++      delete process.env.OPENCLAW_STATE_DIR;
++    }
+   });
+ 
+   it("handles /stop in control plane and sends ack before final", async () => {
+diff --git a/src/auto-reply/control-plane.ts b/src/auto-reply/control-plane.ts
+index 475864d6c..1026da30c 100644
+--- a/src/auto-reply/control-plane.ts
++++ b/src/auto-reply/control-plane.ts
+@@ -196,9 +196,6 @@ export async function maybeHandleControlPlaneCommand(params: {
+   }
+ 
+   const auth = resolveCommandAuthorization({ ctx, cfg, commandAuthorized: ctx.CommandAuthorized });
+-  if (!auth.isAuthorizedSender) {
+-    return { handled: true };
+-  }
+ 
+   const adapter = String(ctx.Surface ?? ctx.Provider ?? "unknown").toLowerCase();
+   const agentId = resolveSessionAgentId({ sessionKey: ctx.SessionKey ?? "", config: cfg });
+diff --git a/src/auto-reply/reply/dispatch-from-config.ts b/src/auto-reply/reply/dispatch-from-config.ts
+index b116c1c11..db8542f68 100644
+--- a/src/auto-reply/reply/dispatch-from-config.ts
++++ b/src/auto-reply/reply/dispatch-from-config.ts
+@@ -57,7 +57,6 @@ const isInboundAudioContext = (ctx: FinalizedMsgContext): boolean => {
+   return AUDIO_HEADER_RE.test(trimmed);
+ };
+ 
+-
+ const STRICT_CONTROL_COMMAND_RE = /^\s*\/(stop|status)(?:@[\w_]+)?\s*$/i;
+ const CONTROL_ACK_TIMEOUT_MS = 1_000;
+ const CONTROL_ABORT_DISPATCH_TIMEOUT_MS = 3_000;
+@@ -211,7 +210,7 @@ export async function dispatchReplyFromConfig(params: {
+     const counts = dispatcher.getQueuedCounts();
+     recordProcessed("completed", { reason: "control_plane" });
+     markIdle("message_completed");
+-    return { queuedFinal: counts.final > 0, counts };
++    return { queuedFinal: true, counts };
+   }
+ 
+   const inboundAudio = isInboundAudioContext(ctx);
