@@ -1,0 +1,110 @@
+From 3a9cf3e2f5f8f19005a8fa870ffeaa71a7db7aa9 Mon Sep 17 00:00:00 2001
+From: dddabtc <zhaodali78@gmail.com>
+Date: Sun, 22 Feb 2026 23:21:52 -0400
+Subject: [PATCH] fix(control): keep strict /status mention match and disable
+ non-telegram status fast path
+
+---
+ src/auto-reply/control-plane.ts | 70 ++++-----------------------------
+ 1 file changed, 8 insertions(+), 62 deletions(-)
+
+diff --git a/src/auto-reply/control-plane.ts b/src/auto-reply/control-plane.ts
+index 3abf984..6cc275d 100644
+--- a/src/auto-reply/control-plane.ts
++++ b/src/auto-reply/control-plane.ts
+@@ -13,7 +13,6 @@ import { normalizeCommandBody } from "./commands-registry.js";
+ import { formatAbortReplyText, tryFastAbortFromMessage } from "./reply/abort.js";
+ import { getFollowupQueueDepth, resolveQueueSettings } from "./reply/queue.js";
+ import type { ReplyDispatcher } from "./reply/reply-dispatcher.js";
+-import { buildStatusMessage } from "./status.js";
+ import type { FinalizedMsgContext } from "./templating.js";
+ 
+ export const STRICT_CONTROL_COMMAND_RE = /^\/(stop|status)(?:@[\w_]+)?$/i;
+@@ -60,11 +59,15 @@ export function matchStrictControlCommand(
+   if (!rawTrimmed) {
+     return null;
+   }
+-  const normalized = normalizeCommandBody(rawTrimmed);
+-  if (normalized !== "/stop" && normalized !== "/status") {
++  const m = rawTrimmed.match(STRICT_CONTROL_COMMAND_RE);
++  if (!m) {
+     return null;
+   }
+-  return { command: normalized.slice(1) as ControlCommand, rawTrimmed };
++  const command = (m[1] ?? "").toLowerCase();
++  if (command !== "stop" && command !== "status") {
++    return null;
++  }
++  return { command: command as ControlCommand, rawTrimmed };
+ }
+ 
+ function appendJsonl(filePath: string, record: unknown): void {
+@@ -337,64 +340,7 @@ export async function maybeHandleControlPlaneCommand(params: {
+   adapterWriter.write({ type: "RECEIVED", at: now, commandId, raw: matched.rawTrimmed });
+ 
+   if (matched.command === "status") {
+-    // Resolve the *target* session (the main chat session) rather than the
+-    // command-lane session so that context/compaction/usage stats are accurate.
+-    const targetSessionKey = ctx.CommandTargetSessionKey?.trim() || ctx.SessionKey;
+-    const targetAgentId = targetSessionKey
+-      ? resolveSessionAgentId({ sessionKey: targetSessionKey, config: cfg })
+-      : agentId;
+-    const storePath = resolveStorePath(cfg.session?.store, { agentId: targetAgentId });
+-    const sessionStore = loadSessionStore(storePath, { skipCache: true });
+-    const targetEntry = targetSessionKey ? sessionStore[targetSessionKey] : undefined;
+-
+-    const agentDefaults = cfg.agents?.defaults ?? {};
+-    const selectedModel =
+-      targetEntry?.modelOverride ?? agentDefaults.model?.primary ?? "unknown/unknown";
+-    const contextTokens =
+-      targetEntry?.contextTokens ??
+-      agentDefaults.contextTokens ??
+-      lookupContextTokens(selectedModel) ??
+-      DEFAULT_CONTEXT_TOKENS;
+-
+-    const queueSettings = resolveQueueSettings({
+-      cfg,
+-      channel: String(ctx.Surface ?? ctx.Provider ?? "unknown"),
+-      sessionEntry: targetEntry,
+-    });
+-    const queueDepth = targetSessionKey ? getFollowupQueueDepth(targetSessionKey) : 0;
+-
+-    const statusText = buildStatusMessage({
+-      config: cfg,
+-      agent: {
+-        ...agentDefaults,
+-        model: {
+-          ...agentDefaults.model,
+-          primary: selectedModel,
+-        },
+-        contextTokens,
+-      } as never,
+-      agentId: targetAgentId,
+-      sessionEntry: targetEntry,
+-      sessionKey: targetSessionKey,
+-      resolvedVerbose: "off",
+-      resolvedReasoning: "off",
+-      queue: {
+-        mode: queueSettings.mode ?? "collect",
+-        depth: queueDepth,
+-      },
+-      includeTranscriptUsage: false,
+-    });
+-    dispatcher.sendFinalReply({ text: statusText });
+-    execWriter.appendEvent({
+-      eventId: `evt_${crypto.randomUUID()}`,
+-      commandId,
+-      seq,
+-      agentId,
+-      type: "DONE",
+-      at: new Date().toISOString(),
+-      data: { fastPath: true, status: "ok" },
+-    });
+-    return { handled: true };
++    return { handled: false };
+   }
+ 
+   ingressWriter.appendQueue(envelope);
+-- 
+2.25.1
+
