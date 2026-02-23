@@ -171,28 +171,34 @@ jobs:
           git -C ./work config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Apply overlay patch set (candidate)
+        id: apply_patch
+        continue-on-error: true
         run: |
           set -euo pipefail
           OVERLAY_CI_ONLY_APPLY=1 ./scripts/apply-personal-patch.sh ./work
 
       - name: Install dependencies for upstream workspace
+        if: steps.apply_patch.outcome == 'success'
         run: |
           cd work
           pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Run overlay build smoke (required)
+        if: steps.apply_patch.outcome == 'success'
         id: smoke
         run: |
           cd work
           pnpm -s build
 
       - name: Build dist overlay artifact
+        if: steps.apply_patch.outcome == 'success'
         run: |
           scripts/build-dist-overlay.sh ./work dist-overlay
           mkdir -p out
           mv dist-overlay dist-overlay.tar.gz dist-overlay.tar.gz.sha256 out/
 
       - name: Fill overlayHeadCommit in compatibility.json
+        if: steps.apply_patch.outcome == 'success'
         run: |
           set -euo pipefail
           head_sha=$(git -C work rev-parse HEAD)
@@ -203,6 +209,7 @@ jobs:
           mv "$tmp" compatibility.json
 
       - name: Upload candidate artifacts
+        if: steps.apply_patch.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: auto-compat-artifacts-${{ env.UPSTREAM_VERSION }}
@@ -212,7 +219,13 @@ jobs:
         run: |
           rm -rf work out
 
+      - name: Skip incompatible candidate patchset without failing workflow
+        if: steps.apply_patch.outcome != 'success'
+        run: |
+          echo "::warning::auto-compat skipped for ${UPSTREAM_VERSION}: candidate patchset ${AUTO_PATCHSET_DIR} did not apply cleanly to ${UPSTREAM_SHA}."
+
       - name: Create pull request for new compatibility support
+        if: steps.apply_patch.outcome == 'success'
         id: cpr
         uses: peter-evans/create-pull-request@v7
         with:
@@ -239,7 +252,7 @@ jobs:
             compatibility
 
       - name: Enable auto-merge for compatibility PR (best-effort)
-        if: steps.cpr.outputs.pull-request-number != '' && steps.smoke.outcome == 'success'
+        if: steps.apply_patch.outcome == 'success' && steps.cpr.outputs.pull-request-number != '' && steps.smoke.outcome == 'success'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
