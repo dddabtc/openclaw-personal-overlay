@@ -47,12 +47,48 @@ find_npm_global_root() {
 }
 
 resolve_openclaw_install_root() {
-  local candidates=()
+  # 1. Explicit override always wins.
   if [[ -n "${OPENCLAW_INSTALL_ROOT:-}" ]]; then
-    candidates+=("$OPENCLAW_INSTALL_ROOT")
+    if [[ -f "$OPENCLAW_INSTALL_ROOT/package.json" ]]; then
+      echo "$OPENCLAW_INSTALL_ROOT"
+      return 0
+    fi
   fi
 
-  candidates+=("$HOME/.local/lib/node_modules/openclaw")
+  # 2. Resolve from `which openclaw` (follows symlinks to the real binary).
+  #    This is the most reliable indicator of which install is actually in use.
+  local oc_bin
+  oc_bin="$(command -v openclaw 2>/dev/null || true)"
+  if [[ -n "$oc_bin" ]]; then
+    local real_bin
+    real_bin="$(readlink -f "$oc_bin" 2>/dev/null || echo "$oc_bin")"
+    # The binary is typically at <root>/openclaw.mjs or <root>/bin/openclaw,
+    # and the package root contains package.json.
+    local dir
+    dir="$(dirname "$real_bin")"
+    # Check if package.json is in the same directory (e.g. openclaw.mjs at root)
+    if [[ -f "$dir/package.json" ]]; then
+      echo "$dir"
+      return 0
+    fi
+    # Check parent (e.g. bin/openclaw -> ../package.json)
+    local parent
+    parent="$(cd "$dir/.." 2>/dev/null && pwd || true)"
+    if [[ -n "$parent" && -f "$parent/package.json" ]]; then
+      echo "$parent"
+      return 0
+    fi
+    # Check lib/node_modules/openclaw relative to prefix
+    local prefix
+    prefix="$(cd "$dir/.." 2>/dev/null && pwd || true)"
+    if [[ -n "$prefix" && -f "$prefix/lib/node_modules/openclaw/package.json" ]]; then
+      echo "$prefix/lib/node_modules/openclaw"
+      return 0
+    fi
+  fi
+
+  # 3. Fallback candidates (npm global, common paths).
+  local candidates=()
 
   local npm_root
   npm_root="$(find_npm_global_root)"
@@ -63,28 +99,35 @@ resolve_openclaw_install_root() {
   [[ -n "$npm_prefix" ]] && candidates+=("$npm_prefix/lib/node_modules/openclaw")
 
   candidates+=(
+    "$HOME/.local/lib/node_modules/openclaw"
     "/usr/local/lib/node_modules/openclaw"
     "/usr/lib/node_modules/openclaw"
   )
 
-  local oc_bin
-  oc_bin="$(command -v openclaw 2>/dev/null || true)"
-  if [[ -n "$oc_bin" ]]; then
-    local real_bin
-    real_bin="$(readlink -f "$oc_bin" 2>/dev/null || echo "$oc_bin")"
-    local maybe_root
-    maybe_root="$(cd "$(dirname "$real_bin")/.." 2>/dev/null && pwd || true)"
-    [[ -n "$maybe_root" ]] && candidates+=("$maybe_root/lib/node_modules/openclaw")
-    [[ -n "$maybe_root" ]] && candidates+=("$maybe_root/node_modules/openclaw")
-  fi
-
+  # Collect all found installs for diagnostics.
+  local found=()
   local c
   for c in "${candidates[@]}"; do
     if [[ -f "$c/package.json" ]]; then
-      echo "$c"
-      return 0
+      found+=("$c")
     fi
   done
+
+  if [[ ${#found[@]} -gt 1 ]]; then
+    log "WARNING: multiple openclaw installs detected:"
+    for c in "${found[@]}"; do
+      local v
+      v="$(python3 -c 'import json;print(json.load(open("'"$c/package.json"'"))["version"])' 2>/dev/null || echo '?')"
+      log "  - $c (version $v)"
+    done
+    log "Using first match. Set OPENCLAW_INSTALL_ROOT to override."
+  fi
+
+  if [[ ${#found[@]} -ge 1 ]]; then
+    echo "${found[0]}"
+    return 0
+  fi
+
   return 1
 }
 
