@@ -70,6 +70,9 @@ jobs:
           # Ensure official support releases always include finalized compatibility metadata.
           gh release upload "$TAG" compatibility.json --repo "$REPO" --clobber
 
+          # Remove stale candidate asset if present from prior workflow versions.
+          gh release delete-asset "$TAG" compatibility-candidate.json --repo "$REPO" --yes 2>/dev/null || true
+
       - name: Prune old support branches (keep latest N)
         run: |
           set -euo pipefail
