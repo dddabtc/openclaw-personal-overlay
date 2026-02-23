@@ -2,17 +2,23 @@ name: support-release-rollover
 
 "on":
   workflow_dispatch: {}
-  push:
-    branches: [main]
-    paths:
-      - 'compatibility.json'
-      - '.github/workflows/support-release-rollover.yml'
+  workflow_run:
+    workflows: ["overlay-ci"]
+    types: [completed]
 
 permissions:
   contents: write
 
 jobs:
   publish-and-prune:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main'
+      )
     runs-on: ubuntu-latest
     env:
       KEEP_SUPPORT_BRANCHES: '20'
@@ -21,6 +27,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
       - name: Resolve latest non-deprecated compatibility entry
         id: latest
@@ -45,7 +52,7 @@ jobs:
         run: |
           set -euo pipefail
           BRANCH='${{ steps.latest.outputs.branch }}'
-          git checkout -B "$BRANCH" origin/main
+          git checkout -B "$BRANCH" HEAD
           git push origin "$BRANCH" --force-with-lease
 
       - name: Publish release tag for latest compatible version (idempotent)
