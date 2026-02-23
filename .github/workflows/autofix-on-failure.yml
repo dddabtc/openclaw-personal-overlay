@@ -32,52 +32,96 @@ jobs:
           RUN_URL='${{ github.event.workflow_run.html_url }}'
           WORKFLOW='${{ github.event.workflow_run.name }}'
           BRANCH='${{ github.event.workflow_run.head_branch }}'
+          DISPLAY_TITLE='${{ github.event.workflow_run.display_title }}'
+
+          UPSTREAM_VERSION=$(printf '%s\n' "$DISPLAY_TITLE" | sed -nE 's/.*upstream[^0-9]*([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' | head -n1)
+          if [[ -z "${UPSTREAM_VERSION:-}" ]]; then
+            UPSTREAM_VERSION="n/a"
+          fi
 
           FAILED_JOBS=$(gh api repos/$REPO/actions/runs/$RUN_ID/jobs --jq '.jobs[] | select(.conclusion=="failure") | .name' | paste -sd ', ' -)
           if [[ -z "${FAILED_JOBS:-}" ]]; then
             FAILED_JOBS="(no failed job name available)"
           fi
 
+          DEDUPE_KEY="${WORKFLOW}|${BRANCH}|${UPSTREAM_VERSION}"
+          TITLE="[autofix] ${WORKFLOW} failed on ${BRANCH}"
+
           echo "repo=$REPO" >> "$GITHUB_OUTPUT"
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
           echo "run_url=$RUN_URL" >> "$GITHUB_OUTPUT"
           echo "workflow=$WORKFLOW" >> "$GITHUB_OUTPUT"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "upstream_version=$UPSTREAM_VERSION" >> "$GITHUB_OUTPUT"
           echo "failed_jobs=$FAILED_JOBS" >> "$GITHUB_OUTPUT"
+          echo "dedupe_key=$DEDUPE_KEY" >> "$GITHUB_OUTPUT"
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
 
-      - name: Open autofix issue (for Copilot coding agent)
+      - name: Create or reuse autofix issue (dedupe)
         id: issue
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TITLE="[autofix] ${{ steps.ctx.outputs.workflow }} failed on ${{ steps.ctx.outputs.branch }}"
-          printf -v BODY '%s\n' \
-            'An automated workflow failed and needs auto-repair.' \
-            '' \
-            '- Workflow: `${{ steps.ctx.outputs.workflow }}`' \
-            '- Branch: `${{ steps.ctx.outputs.branch }}`' \
-            '- Failed jobs: `${{ steps.ctx.outputs.failed_jobs }}`' \
-            '- Run: ${{ steps.ctx.outputs.run_url }}' \
-            '' \
-            'Task for GitHub Copilot coding agent:' \
-            '1. Investigate the failed job(s) from the run URL above.' \
-            '2. Propose and implement the minimal fix in this repository.' \
-            '3. Open a PR with clear root-cause summary and test evidence.' \
-            '4. If needed, re-run affected workflow checks.' \
-            '' \
-            '@copilot please fix this CI failure automatically.'
-
-          ISSUE_URL=$(gh issue create \
-            --repo "${{ steps.ctx.outputs.repo }}" \
-            --title "$TITLE" \
-            --body "$BODY")
-          ISSUE_NUMBER=$(basename "$ISSUE_URL")
+          REPO='${{ steps.ctx.outputs.repo }}'
+          TITLE='${{ steps.ctx.outputs.title }}'
+          DEDUPE_KEY='${{ steps.ctx.outputs.dedupe_key }}'
+          KEY_MARKER="<!-- autofix-key:${DEDUPE_KEY} -->"
 
           # Best-effort labels (create if missing)
-          gh api --silent -X POST repos/${{ steps.ctx.outputs.repo }}/labels -f name='autofix' -f color='B60205' -f description='Auto-generated fix task' || true
-          gh api --silent -X POST repos/${{ steps.ctx.outputs.repo }}/labels -f name='ci-failure' -f color='D93F0B' -f description='Created from failed workflow run' || true
-          gh issue edit "$ISSUE_NUMBER" --repo "${{ steps.ctx.outputs.repo }}" --add-label autofix --add-label ci-failure || true
+          gh api --silent -X POST repos/$REPO/labels -f name='autofix' -f color='B60205' -f description='Auto-generated fix task' || true
+          gh api --silent -X POST repos/$REPO/labels -f name='ci-failure' -f color='D93F0B' -f description='Created from failed workflow run' || true
+
+          EXISTING_ISSUE_NUMBER=$(gh issue list \
+            --repo "$REPO" \
+            --state open \
+            --label autofix \
+            --limit 200 \
+            --json number,title,body \
+            --jq '.[] | select((.body // "") | contains("'"$KEY_MARKER"'")) | .number' | head -n1)
+
+          if [[ -z "${EXISTING_ISSUE_NUMBER:-}" ]]; then
+            # Backward-compatible fallback for older issues without dedupe marker.
+            EXISTING_ISSUE_NUMBER=$(gh issue list \
+              --repo "$REPO" \
+              --state open \
+              --label autofix \
+              --search "in:title \"$TITLE\"" \
+              --limit 20 \
+              --json number,title \
+              --jq '.[] | select(.title == "'"$TITLE"'") | .number' | head -n1)
+          fi
+
+          if [[ -n "${EXISTING_ISSUE_NUMBER:-}" ]]; then
+            gh issue comment "$EXISTING_ISSUE_NUMBER" --repo "$REPO" --body "Detected repeated failure for same source key. Reusing this autofix issue.\n\n- Key: \`${DEDUPE_KEY}\`\n- Workflow: \`${{ steps.ctx.outputs.workflow }}\`\n- Branch: \`${{ steps.ctx.outputs.branch }}\`\n- Upstream version: \`${{ steps.ctx.outputs.upstream_version }}\`\n- Failed jobs: \`${{ steps.ctx.outputs.failed_jobs }}\`\n- Latest run: ${{ steps.ctx.outputs.run_url }}"
+            ISSUE_URL=$(gh issue view "$EXISTING_ISSUE_NUMBER" --repo "$REPO" --json url --jq '.url')
+          else
+            printf -v BODY '%s\n' \
+              'An automated workflow failed and needs auto-repair.' \
+              '' \
+              "$KEY_MARKER" \
+              '' \
+              '- Workflow: `${{ steps.ctx.outputs.workflow }}`' \
+              '- Branch: `${{ steps.ctx.outputs.branch }}`' \
+              '- Upstream version: `${{ steps.ctx.outputs.upstream_version }}`' \
+              '- Failed jobs: `${{ steps.ctx.outputs.failed_jobs }}`' \
+              '- Run: ${{ steps.ctx.outputs.run_url }}' \
+              '' \
+              'Task for GitHub Copilot coding agent:' \
+              '1. Investigate the failed job(s) from the run URL above.' \
+              '2. Propose and implement the minimal fix in this repository.' \
+              '3. Open a PR with clear root-cause summary and test evidence.' \
+              '4. If needed, re-run affected workflow checks.' \
+              '' \
+              '@copilot please fix this CI failure automatically.'
+
+            ISSUE_URL=$(gh issue create \
+              --repo "$REPO" \
+              --title "$TITLE" \
+              --body "$BODY")
+            EXISTING_ISSUE_NUMBER=$(basename "$ISSUE_URL")
+            gh issue edit "$EXISTING_ISSUE_NUMBER" --repo "$REPO" --add-label autofix --add-label ci-failure || true
+          fi
 
           echo "issue_url=$ISSUE_URL" >> "$GITHUB_OUTPUT"
 
@@ -89,3 +133,53 @@ jobs:
           set -euo pipefail
           ISSUE_NUMBER=$(basename "${{ steps.issue.outputs.issue_url }}")
           gh issue edit "$ISSUE_NUMBER" --repo "${{ steps.ctx.outputs.repo }}" --add-assignee copilot
+
+  autoclose-resolved-autofix-issue:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close matching open autofix issue if resolution observed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          REPO='${{ github.repository }}'
+          RUN_URL='${{ github.event.workflow_run.html_url }}'
+          WORKFLOW='${{ github.event.workflow_run.name }}'
+          BRANCH='${{ github.event.workflow_run.head_branch }}'
+          DISPLAY_TITLE='${{ github.event.workflow_run.display_title }}'
+
+          UPSTREAM_VERSION=$(printf '%s\n' "$DISPLAY_TITLE" | sed -nE 's/.*upstream[^0-9]*([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' | head -n1)
+          if [[ -z "${UPSTREAM_VERSION:-}" ]]; then
+            UPSTREAM_VERSION="n/a"
+          fi
+
+          DEDUPE_KEY="${WORKFLOW}|${BRANCH}|${UPSTREAM_VERSION}"
+          TITLE="[autofix] ${WORKFLOW} failed on ${BRANCH}"
+          KEY_MARKER="<!-- autofix-key:${DEDUPE_KEY} -->"
+
+          ISSUE_NUMBER=$(gh issue list \
+            --repo "$REPO" \
+            --state open \
+            --label autofix \
+            --limit 200 \
+            --json number,title,body \
+            --jq '.[] | select((.body // "") | contains("'"$KEY_MARKER"'")) | .number' | head -n1)
+
+          if [[ -z "${ISSUE_NUMBER:-}" ]]; then
+            ISSUE_NUMBER=$(gh issue list \
+              --repo "$REPO" \
+              --state open \
+              --label autofix \
+              --search "in:title \"$TITLE\"" \
+              --limit 20 \
+              --json number,title \
+              --jq '.[] | select(.title == "'"$TITLE"'") | .number' | head -n1)
+          fi
+
+          if [[ -n "${ISSUE_NUMBER:-}" ]]; then
+            gh issue comment "$ISSUE_NUMBER" --repo "$REPO" --body "Auto-closing: a newer successful run indicates this failure chain is resolved.\n\n- Key: \`${DEDUPE_KEY}\`\n- Resolved by run: $RUN_URL"
+            gh issue close "$ISSUE_NUMBER" --repo "$REPO"
+          else
+            echo "No matching open autofix issue found for key: $DEDUPE_KEY"
+          fi
