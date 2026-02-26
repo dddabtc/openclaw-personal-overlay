@@ -103,6 +103,14 @@ jobs:
     if: needs.fix-and-pr.outputs.pr_number != ''
     runs-on: ubuntu-latest
     steps:
+      - name: Trigger CI on autofix branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.fix-and-pr.outputs.pr_number }}
+        run: |
+          branch=$(gh pr view "$PR" --repo "${{ github.repository }}" --json headRefName --jq '.headRefName')
+          gh workflow run ci.yml --repo "${{ github.repository }}" --ref "$branch"
+
       - name: Wait for PR merge
         env:
           GH_TOKEN: ${{ github.token }}
