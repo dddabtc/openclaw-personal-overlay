@@ -168,9 +168,7 @@ jobs:
             const {owner, repo} = context.repo;
             const q = `repo:${owner}/${repo} is:issue is:open in:title "${title}"`;
             const result = await github.rest.search.issuesAndPullRequests({q});
-            const body = `autocompat residue recorded
-run: https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}
-time: ${new Date().toISOString()}`;
+            const body = `autocompat residue recorded\nrun: https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}\ntime: ${new Date().toISOString()}`;
             if (result.data.items.some(i => i.title === title)) return;
             await github.rest.issues.create({
               owner, repo, title, body,
