@@ -8,6 +8,9 @@ name: autofix-on-failure
       - support-release-rollover
     types:
       - completed
+  repository_dispatch:
+    types:
+      - autofix-requested
   workflow_dispatch: {}
 
 permissions:
@@ -18,7 +21,7 @@ permissions:
 
 jobs:
   dispatch-copilot-fix:
-    if: github.event.workflow_run.conclusion == 'failure'
+    if: (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure') || github.event_name == 'repository_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Gather failed run context
@@ -28,20 +31,30 @@ jobs:
         run: |
           set -euo pipefail
           REPO='${{ github.repository }}'
-          RUN_ID='${{ github.event.workflow_run.id }}'
-          RUN_URL='${{ github.event.workflow_run.html_url }}'
-          WORKFLOW='${{ github.event.workflow_run.name }}'
-          BRANCH='${{ github.event.workflow_run.head_branch }}'
-          DISPLAY_TITLE='${{ github.event.workflow_run.display_title }}'
 
-          UPSTREAM_VERSION=$(printf '%s\n' "$DISPLAY_TITLE" | sed -nE 's/.*upstream[^0-9]*([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' | head -n1)
-          if [[ -z "${UPSTREAM_VERSION:-}" ]]; then
-            UPSTREAM_VERSION="n/a"
-          fi
+          if [[ '${{ github.event_name }}' == 'repository_dispatch' ]]; then
+            RUN_ID='${{ github.event.client_payload.source_run_id || '' }}'
+            RUN_URL='${{ github.event.client_payload.source_run_url || '' }}'
+            WORKFLOW='${{ github.event.client_payload.source_workflow || 'repository_dispatch' }}'
+            BRANCH='${{ github.event.client_payload.source_branch || github.ref_name }}'
+            UPSTREAM_VERSION='${{ github.event.client_payload.upstream_version || 'n/a' }}'
+            FAILED_JOBS='${{ github.event.client_payload.reason || 'repository_dispatch' }}'
+          else
+            RUN_ID='${{ github.event.workflow_run.id }}'
+            RUN_URL='${{ github.event.workflow_run.html_url }}'
+            WORKFLOW='${{ github.event.workflow_run.name }}'
+            BRANCH='${{ github.event.workflow_run.head_branch }}'
+            DISPLAY_TITLE='${{ github.event.workflow_run.display_title }}'
 
-          FAILED_JOBS=$(gh api repos/$REPO/actions/runs/$RUN_ID/jobs --jq '.jobs[] | select(.conclusion=="failure") | .name' | paste -sd ', ' -)
-          if [[ -z "${FAILED_JOBS:-}" ]]; then
-            FAILED_JOBS="(no failed job name available)"
+            UPSTREAM_VERSION=$(printf '%s\n' "$DISPLAY_TITLE" | sed -nE 's/.*upstream[^0-9]*([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' | head -n1)
+            if [[ -z "${UPSTREAM_VERSION:-}" ]]; then
+              UPSTREAM_VERSION="n/a"
+            fi
+
+            FAILED_JOBS=$(gh api repos/$REPO/actions/runs/$RUN_ID/jobs --jq '.jobs[] | select(.conclusion=="failure") | .name' | paste -sd ', ' -)
+            if [[ -z "${FAILED_JOBS:-}" ]]; then
+              FAILED_JOBS="(no failed job name available)"
+            fi
           fi
 
           DEDUPE_KEY="${WORKFLOW}|${BRANCH}|${UPSTREAM_VERSION}"
@@ -135,7 +148,7 @@ jobs:
           gh issue edit "$ISSUE_NUMBER" --repo "${{ steps.ctx.outputs.repo }}" --add-assignee copilot
 
   autoclose-resolved-autofix-issue:
-    if: github.event.workflow_run.conclusion == 'success'
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Close matching open autofix issue if resolution observed
