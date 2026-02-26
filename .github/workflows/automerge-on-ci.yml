@@ -50,7 +50,8 @@ jobs:
       - name: Merge PR after checks green (policy-aware)
         if: steps.findpr.outputs.pr != ''
         env:
-          GH_TOKEN: ${{ github.token }}
+          # Prefer PAT when available (for stricter protected-branch setups), fallback to GITHUB_TOKEN.
+          GH_TOKEN: ${{ secrets.OC_ADMIN_TOKEN || github.token }}
           PR: ${{ steps.findpr.outputs.pr }}
           REPO: ${{ github.repository }}
         run: |
