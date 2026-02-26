@@ -172,6 +172,17 @@ jobs:
         run: |
           scripts/build-dist-overlay.sh /tmp/openclaw-src dist-overlay
 
+      - name: Preflight gate: required release assets must exist
+        run: |
+          set -euo pipefail
+          required=(dist-overlay.tar.gz dist-overlay.tar.gz.sha256)
+          for f in "${required[@]}"; do
+            if [ ! -s "$f" ]; then
+              echo "Missing required release asset: $f" >&2
+              exit 1
+            fi
+          done
+
       - name: Create tag and release
         env:
           GH_TOKEN: ${{ secrets.OC_GH_TOKEN }}
@@ -195,3 +206,14 @@ jobs:
           RELEASE_TAG: ${{ steps.normalize.outputs.release_tag }}
         run: |
           gh release upload "${RELEASE_TAG}" dist-overlay.tar.gz dist-overlay.tar.gz.sha256 --clobber
+
+      - name: Postflight gate: verify published release assets via GitHub API
+        env:
+          GH_TOKEN: ${{ secrets.OC_GH_TOKEN }}
+          RELEASE_TAG: ${{ steps.normalize.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          names="$(gh api "repos/${{ github.repository }}/releases/tags/${RELEASE_TAG}" --jq '.assets[].name')"
+          echo "Published assets:" && echo "$names"
+          echo "$names" | grep -Fx "dist-overlay.tar.gz" >/dev/null || { echo "Release missing dist-overlay.tar.gz" >&2; exit 1; }
+          echo "$names" | grep -Fx "dist-overlay.tar.gz.sha256" >/dev/null || { echo "Release missing dist-overlay.tar.gz.sha256" >&2; exit 1; }
