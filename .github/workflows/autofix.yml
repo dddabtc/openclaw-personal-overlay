@@ -181,6 +181,25 @@ jobs:
           echo "pr=$pr" >> "$GITHUB_OUTPUT"
           [ -n "$pr" ] || { echo "E_AUTOFIX_NO_PR_CREATED" >&2; exit 1; }
 
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.OC_GH_TOKEN }}
+
+      - name: Auto-fix PR conflicts before CI
+        id: conflicts
+        env:
+          GH_TOKEN: ${{ secrets.OC_GH_TOKEN }}
+          PR_NUMBER: ${{ steps.choose.outputs.pr }}
+          REPO: ${{ github.repository }}
+          MAX_CONFLICT_FIX_ATTEMPTS: '2'
+          CONFLICT_SYNC_METHOD: merge
+          CONFLICT_RESOLVE_MODE: whitelist
+          CONFLICT_PREFERRED_SIDE: theirs
+          CONFLICT_RESOLVE_WHITELIST: compatibility.json,CHANGELOG.md,.autofix/*,.github/workflows/*
+          COMMENT_ON_CONFLICT_FAILURE: 'true'
+        run: scripts/resolve-pr-conflicts.sh
+
       - name: Trigger CI run
         env:
           GH_TOKEN: ${{ secrets.OC_GH_TOKEN }}
