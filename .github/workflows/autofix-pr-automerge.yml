@@ -36,7 +36,7 @@ jobs:
           if echo "$LABELS" | grep -qx 'autofix'; then
             SHOULD="1"
           fi
-          if [[ "$HEAD" == autofix/* || "$HEAD" == copilot/* ]]; then
+          if [[ "$HEAD" == autofix/* ]]; then
             SHOULD="1"
           fi
 
