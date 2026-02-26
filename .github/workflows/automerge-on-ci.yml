@@ -31,7 +31,7 @@ jobs:
           github-token: ${{ secrets.OC_GH_TOKEN }}
           script: |
             const branch = context.payload.workflow_run.head_branch;
-            if (!branch || !branch.startsWith('autofix/')) {
+            if (!branch) {
               core.setOutput('pr', '');
               return;
             }
