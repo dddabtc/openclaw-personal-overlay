@@ -32,10 +32,21 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
+      - name: Enforce single-token secret
+        env:
+          SINGLE_TOKEN: ${{ secrets.OC_GH_TOKEN }}
+        run: |
+          if [ -z "${SINGLE_TOKEN}" ]; then
+            echo '{"error_code":"E_SINGLE_TOKEN_MISSING","required_secret":"OC_GH_TOKEN"}'
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: ${{ github.ref_name }}
+          token: ${{ secrets.OC_GH_TOKEN }}
+
       - name: Normalize release tag
         id: normalize
         env:
@@ -46,9 +57,7 @@ jobs:
           release_tag="overlay-v${upstream_version}"
           echo "upstream_version=${upstream_version}" >> "$GITHUB_OUTPUT"
           echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
-          if [ -n "${INPUT_RELEASE_TAG}" ] && [ "${INPUT_RELEASE_TAG}" != "${release_tag}" ]; then
-            echo "warning: overriding input release_tag '${INPUT_RELEASE_TAG}' -> '${release_tag}'"
-          fi
+
       - name: Update CHANGELOG
         env:
           RELEASE_TAG: ${{ steps.normalize.outputs.release_tag }}
@@ -56,13 +65,18 @@ jobs:
           SOURCE_RUN_URL: ${{ inputs.source_run_url }}
         run: |
           d="$(date -u +%Y-%m-%d)"
-          entry="## ${RELEASE_TAG} (${d})\n- auto-compat: support upstream ${UPSTREAM_TAG}\n- source run: ${SOURCE_RUN_URL}\n"
           if grep -q "^## ${RELEASE_TAG}" CHANGELOG.md; then
             echo "CHANGELOG already contains ${RELEASE_TAG}"
-          else
-            { printf "%b\n" "$entry"; cat CHANGELOG.md; } > CHANGELOG.md.new
-            mv CHANGELOG.md.new CHANGELOG.md
+            exit 0
           fi
+          cat > /tmp/changelog-entry.md <<EOF
+          ## ${RELEASE_TAG} (${d})
+          - auto-compat: support upstream ${UPSTREAM_TAG}
+          - source run: ${SOURCE_RUN_URL}
+          EOF
+          cat /tmp/changelog-entry.md CHANGELOG.md > CHANGELOG.md.new
+          mv CHANGELOG.md.new CHANGELOG.md
+
       - name: Commit changelog (skip protected main)
         run: |
           git config user.name "github-actions[bot]"
@@ -78,9 +92,10 @@ jobs:
           fi
           git commit -m "chore(release): update changelog for ${{ steps.normalize.outputs.release_tag }}"
           git push origin HEAD:${{ github.ref_name }}
+
       - name: Create tag and release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.OC_GH_TOKEN }}
           RELEASE_TAG: ${{ steps.normalize.outputs.release_tag }}
         run: |
           git fetch --tags
@@ -88,6 +103,9 @@ jobs:
             git tag "${RELEASE_TAG}"
             git push origin "${RELEASE_TAG}"
           fi
-          gh release view "${RELEASE_TAG}" >/dev/null 2>&1 || gh release create "${RELEASE_TAG}" \
-            --title "${RELEASE_TAG}" \
-            --notes "Auto-compat release for upstream ${{ inputs.upstream_tag }}\n\nSource: ${{ inputs.source_run_url }}"
+          cat > /tmp/release-notes.md <<EOF
+          Auto-compat release for upstream ${{ inputs.upstream_tag }}.
+
+          Source: ${{ inputs.source_run_url }}
+          EOF
+          gh release view "${RELEASE_TAG}" >/dev/null 2>&1 || gh release create "${RELEASE_TAG}" --title "${RELEASE_TAG}" --notes-file /tmp/release-notes.md
