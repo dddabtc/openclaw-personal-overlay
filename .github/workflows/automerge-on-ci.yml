@@ -65,15 +65,17 @@ jobs:
             const fs = require('fs');
             const report = fs.readFileSync('.autofix/risk-report.json', 'utf8');
             const {owner, repo} = context.repo;
-            const body = `Automerge blocked by B+ policy gate.
-
-error_code: E_POLICY_GATE_BLOCKED
-
-auto_report:
-```json
-${report}
-```
-`;
+            const body = [
+              'Automerge blocked by B+ policy gate.',
+              '',
+              'error_code: E_POLICY_GATE_BLOCKED',
+              '',
+              'auto_report:',
+              '```json',
+              report,
+              '```',
+              ''
+            ].join('\n');
             await github.rest.issues.create({
               owner,
               repo,
