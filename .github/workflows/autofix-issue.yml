@@ -14,6 +14,14 @@ jobs:
   scan-and-trigger:
     runs-on: ubuntu-latest
     steps:
+      - name: Enforce single-token secret
+        env:
+          SINGLE_TOKEN: ${{ secrets.OC_GH_TOKEN }}
+        run: |
+          if [ -z "${SINGLE_TOKEN}" ]; then
+            echo '{"error_code":"E_SINGLE_TOKEN_MISSING","required_secret":"OC_GH_TOKEN"}'
+            exit 1
+          fi
       - name: Find open autofix issues
         id: pick
         uses: actions/github-script@v7
@@ -37,7 +45,7 @@ jobs:
       - name: Trigger autofix workflow for selected issue
         if: steps.pick.outputs.issue != ''
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.OC_GH_TOKEN }}
         run: |
           gh workflow run autofix.yml --repo "${{ github.repository }}" \
             -f reason="issue #${{ steps.pick.outputs.issue }}: ${{ steps.pick.outputs.title }}" \

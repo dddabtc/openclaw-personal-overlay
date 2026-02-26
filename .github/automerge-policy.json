@@ -1,0 +1,20 @@
+{
+  "tier": "B+",
+  "maxFiles": 12,
+  "maxTotalChanges": 400,
+  "maxRiskScore": 12,
+  "allowedPatterns": [
+    "^compatibility\\.json$",
+    "^CHANGELOG\\.md$",
+    "^\\.autofix/.*",
+    "^\\.github/workflows/.*\\.ya?ml$",
+    "^scripts/.*\\.(py|sh)$",
+    "^docs/.*\\.md$"
+  ],
+  "blockedPatterns": [
+    "^bin/",
+    "^patches/",
+    "^tests/"
+  ],
+  "notes": "B+ allows automation/config/doc/runtime-helper updates only. Code payload and patch queue changes still require explicit human approval."
+}
