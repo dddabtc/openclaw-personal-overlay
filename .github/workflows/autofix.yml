@@ -111,21 +111,34 @@ jobs:
           branch=$(gh pr view "$PR" --repo "${{ github.repository }}" --json headRefName --jq '.headRefName')
           gh workflow run ci.yml --repo "${{ github.repository }}" --ref "$branch"
 
-      - name: Wait for PR merge
+      - name: Wait CI success and merge PR
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ needs.fix-and-pr.outputs.pr_number }}
         run: |
+          branch=$(gh pr view "$PR" --repo "${{ github.repository }}" --json headRefName --jq '.headRefName')
+          run_id=""
+          for i in $(seq 1 30); do
+            run_id=$(gh run list --workflow ci.yml --repo "${{ github.repository }}" --branch "$branch" --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId // ""')
+            [ -n "$run_id" ] && break
+            sleep 2
+          done
+          [ -n "$run_id" ] || { echo "No CI run found for $branch"; exit 1; }
+
           for i in $(seq 1 60); do
-            merged=$(gh pr view "$PR" --repo "${{ github.repository }}" --json mergedAt --jq '.mergedAt != null')
-            if [ "$merged" = "true" ]; then
-              echo "PR merged"
+            conclusion=$(gh run view "$run_id" --repo "${{ github.repository }}" --json conclusion,status --jq 'if .status != "completed" then "running" else .conclusion end')
+            if [ "$conclusion" = "success" ]; then
               break
             fi
-            sleep 20
+            [ "$conclusion" = "running" ] || { echo "CI run $run_id ended with $conclusion"; exit 1; }
+            sleep 5
           done
+
+          gh pr review "$PR" --repo "${{ github.repository }}" --approve --body "Auto-approved by autofix pipeline" || true
+          gh pr merge "$PR" --repo "${{ github.repository }}" --squash --delete-branch
+
           merged=$(gh pr view "$PR" --repo "${{ github.repository }}" --json mergedAt --jq '.mergedAt != null')
-          [ "$merged" = "true" ] || { echo "PR not merged in time"; exit 1; }
+          [ "$merged" = "true" ] || { echo "PR merge failed"; exit 1; }
       - name: Close mapped autofix issue (required)
         if: inputs.issue_number != ''
         env:
