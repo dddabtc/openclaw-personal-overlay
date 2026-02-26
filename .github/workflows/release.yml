@@ -172,7 +172,7 @@ jobs:
         run: |
           scripts/build-dist-overlay.sh /tmp/openclaw-src dist-overlay
 
-      - name: Preflight gate: required release assets must exist
+      - name: "Preflight gate: required release assets must exist"
         run: |
           set -euo pipefail
           required=(dist-overlay.tar.gz dist-overlay.tar.gz.sha256)
@@ -207,7 +207,7 @@ jobs:
         run: |
           gh release upload "${RELEASE_TAG}" dist-overlay.tar.gz dist-overlay.tar.gz.sha256 --clobber
 
-      - name: Postflight gate: verify published release assets via GitHub API
+      - name: "Postflight gate: verify published release assets via GitHub API"
         env:
           GH_TOKEN: ${{ secrets.OC_GH_TOKEN }}
           RELEASE_TAG: ${{ steps.normalize.outputs.release_tag }}
