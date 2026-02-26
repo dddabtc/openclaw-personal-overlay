@@ -36,9 +36,22 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.ref_name }}
+      - name: Normalize release tag
+        id: normalize
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          UPSTREAM_TAG: ${{ inputs.upstream_tag }}
+        run: |
+          upstream_version="${UPSTREAM_TAG#v}"
+          release_tag="overlay-v${upstream_version}"
+          echo "upstream_version=${upstream_version}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
+          if [ -n "${INPUT_RELEASE_TAG}" ] && [ "${INPUT_RELEASE_TAG}" != "${release_tag}" ]; then
+            echo "warning: overriding input release_tag '${INPUT_RELEASE_TAG}' -> '${release_tag}'"
+          fi
       - name: Update CHANGELOG
         env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_TAG: ${{ steps.normalize.outputs.release_tag }}
           UPSTREAM_TAG: ${{ inputs.upstream_tag }}
           SOURCE_RUN_URL: ${{ inputs.source_run_url }}
         run: |
@@ -63,17 +76,18 @@ jobs:
             echo "main is protected; skip committing changelog directly"
             exit 0
           fi
-          git commit -m "chore(release): update changelog for ${{ inputs.release_tag }}"
+          git commit -m "chore(release): update changelog for ${{ steps.normalize.outputs.release_tag }}"
           git push origin HEAD:${{ github.ref_name }}
       - name: Create tag and release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.normalize.outputs.release_tag }}
         run: |
           git fetch --tags
-          if ! git rev-parse "${{ inputs.release_tag }}" >/dev/null 2>&1; then
-            git tag "${{ inputs.release_tag }}"
-            git push origin "${{ inputs.release_tag }}"
+          if ! git rev-parse "${RELEASE_TAG}" >/dev/null 2>&1; then
+            git tag "${RELEASE_TAG}"
+            git push origin "${RELEASE_TAG}"
           fi
-          gh release view "${{ inputs.release_tag }}" >/dev/null 2>&1 || gh release create "${{ inputs.release_tag }}" \
-            --title "${{ inputs.release_tag }}" \
+          gh release view "${RELEASE_TAG}" >/dev/null 2>&1 || gh release create "${RELEASE_TAG}" \
+            --title "${RELEASE_TAG}" \
             --notes "Auto-compat release for upstream ${{ inputs.upstream_tag }}\n\nSource: ${{ inputs.source_run_url }}"
