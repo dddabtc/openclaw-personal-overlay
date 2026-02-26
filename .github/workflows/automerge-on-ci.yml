@@ -4,6 +4,12 @@ on:
   workflow_run:
     workflows: ["ci"]
     types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "PR number for manual validation"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -11,9 +17,10 @@ permissions:
   issues: write
 
 jobs:
-  merge-autofix-pr:
-    if: github.event.workflow_run.conclusion == 'success'
+  resolve-pr:
     runs-on: ubuntu-latest
+    outputs:
+      pr: ${{ steps.resolve.outputs.pr }}
     steps:
       - name: Enforce single-token secret
         env:
@@ -24,75 +31,69 @@ jobs:
             exit 1
           fi
 
-      - name: Find open PR from workflow head branch
-        id: findpr
+      - name: Resolve target PR (workflow_run or manual input)
+        id: resolve
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.OC_GH_TOKEN }}
           script: |
-            const branch = context.payload.workflow_run.head_branch;
-            if (!branch || !branch.startsWith('autofix/')) {
+            const { owner, repo } = context.repo;
+
+            if (context.eventName === 'workflow_dispatch') {
+              const manualPr = core.getInput('pr');
+              core.setOutput('pr', manualPr ? String(manualPr) : '');
+              return;
+            }
+
+            const headSha = context.payload.workflow_run?.head_sha;
+            if (!headSha) {
               core.setOutput('pr', '');
               return;
             }
-            const { owner, repo } = context.repo;
-            const prs = await github.rest.pulls.list({ owner, repo, state: 'open', head: `${owner}:${branch}`, per_page: 1 });
-            core.setOutput('pr', prs.data.length ? String(prs.data[0].number) : '');
 
-      - uses: actions/checkout@v4
-        if: steps.findpr.outputs.pr != ''
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.OC_GH_TOKEN }}
+            const prs = await github.paginate(
+              github.rest.repos.listPullRequestsAssociatedWithCommit,
+              { owner, repo, commit_sha: headSha, per_page: 100 }
+            );
 
-      - name: Evaluate B+ automerge policy gate
-        id: risk
-        if: steps.findpr.outputs.pr != ''
-        continue-on-error: true
-        env:
-          BASE_REF: origin/main
-          HEAD_REF: HEAD
-          POLICY_FILE: .github/automerge-policy.json
-          RISK_REPORT: .autofix/risk-report.json
-        run: python3 scripts/automerge-risk-gate.py
+            const openPr = prs.find(pr => pr.state === 'open');
+            core.setOutput('pr', openPr ? String(openPr.number) : '');
 
-      - name: Persist policy block as machine-readable issue
-        if: steps.findpr.outputs.pr != '' && steps.risk.outcome == 'failure'
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.OC_GH_TOKEN }}
-          script: |
-            const fs = require('fs');
-            const report = fs.readFileSync('.autofix/risk-report.json', 'utf8');
-            const {owner, repo} = context.repo;
-            const body = `Automerge blocked by B+ policy gate.
+  fail-on-ci-failure:
+    needs: resolve-pr
+    if: github.event_name == 'workflow_run' && needs.resolve-pr.outputs.pr != '' && github.event.workflow_run.conclusion != 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explicitly fail when CI is not green
+        run: |
+          echo "::error::CI checks are not successful (conclusion=${{ github.event.workflow_run.conclusion }}), refusing automerge for PR #${{ needs.resolve-pr.outputs.pr }}"
+          exit 1
 
-error_code: E_POLICY_GATE_BLOCKED
-
-auto_report:
-```json
-${report}
-```
-`;
-            await github.rest.issues.create({
-              owner,
-              repo,
-              title: `automerge-blocked-pr-${{ steps.findpr.outputs.pr }}`,
-              labels: ['automerge-blocked'],
-              body
-            });
-
-      - name: Merge PR after checks green and policy pass
-        if: steps.findpr.outputs.pr != '' && steps.risk.outcome == 'success'
+  merge-on-ci-success:
+    needs: resolve-pr
+    if: (github.event_name == 'workflow_dispatch' && needs.resolve-pr.outputs.pr != '') || (github.event_name == 'workflow_run' && needs.resolve-pr.outputs.pr != '' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge PR after required checks are green
         env:
           GH_TOKEN: ${{ secrets.OC_GH_TOKEN }}
-          PR: ${{ steps.findpr.outputs.pr }}
+          PR: ${{ needs.resolve-pr.outputs.pr }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           if gh pr merge "$PR" --repo "$REPO" --squash --delete-branch; then
-            echo "Merged via normal policy path"
+            echo "Merged via repository branch protection policy"
             exit 0
           fi
-          gh pr merge "$PR" --repo "$REPO" --squash --delete-branch --admin
-          echo "Merged via admin fallback"
+
+          echo "::error::Automerge blocked. Required checks/reviews are not satisfied for PR #$PR"
+          gh pr view "$PR" --repo "$REPO" --json url,mergeStateStatus,statusCheckRollup,reviewDecision
+          exit 1
+
+  no-pr-detected:
+    needs: resolve-pr
+    if: needs.resolve-pr.outputs.pr == ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: No matching open PR
+        run: echo "No open PR associated with this trigger. Skipping automerge."
