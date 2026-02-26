@@ -1,4 +1,4 @@
-name: auto-review-merge
+name: auto-review
 
 on:
   pull_request_target:
@@ -6,10 +6,9 @@ on:
 
 permissions:
   pull-requests: write
-  contents: write
 
 jobs:
-  review-and-automerge:
+  auto-review-approve:
     if: startsWith(github.event.pull_request.head.ref, 'autofix/')
     runs-on: ubuntu-latest
     steps:
@@ -25,8 +24,3 @@ jobs:
               event: 'APPROVE',
               body: 'Auto-approved by autofix pipeline'
             });
-      - name: Enable auto-merge
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh pr merge "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --squash --auto

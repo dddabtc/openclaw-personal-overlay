@@ -1,0 +1,46 @@
+name: autofix-issue
+
+on:
+  schedule:
+    - cron: '33 */3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  actions: write
+
+jobs:
+  scan-and-trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Find open autofix issues
+        id: pick
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: 'open', per_page: 100
+            });
+            const hit = issues.find(i => !i.pull_request && (
+              (i.labels || []).some(l => (l.name || '') === 'autofix_issue') ||
+              (i.title || '').startsWith('[autofix_issue]')
+            ));
+            if (!hit) {
+              core.setOutput('issue', '');
+              return;
+            }
+            core.setOutput('issue', String(hit.number));
+            core.setOutput('title', hit.title || 'autofix issue');
+      - name: Trigger autofix workflow for selected issue
+        if: steps.pick.outputs.issue != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run autofix.yml --repo "${{ github.repository }}" \
+            -f reason="issue #${{ steps.pick.outputs.issue }}: ${{ steps.pick.outputs.title }}" \
+            -f issue_number="${{ steps.pick.outputs.issue }}"
+      - name: No issue matched
+        if: steps.pick.outputs.issue == ''
+        run: echo "No autofix_issue open issues found"

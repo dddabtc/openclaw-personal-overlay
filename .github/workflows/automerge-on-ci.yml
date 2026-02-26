@@ -1,0 +1,35 @@
+name: automerge-on-ci
+
+on:
+  workflow_run:
+    workflows: ["ci"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  merge-autofix-pr:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Find PR from workflow head branch
+        id: findpr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = context.payload.workflow_run.head_branch;
+            if (!branch || !branch.startsWith('autofix/')) {
+              core.setOutput('pr', '');
+              return;
+            }
+            const {owner, repo} = context.repo;
+            const prs = await github.rest.pulls.list({owner, repo, state: 'open', head: `${owner}:${branch}`});
+            core.setOutput('pr', prs.data.length ? String(prs.data[0].number) : '');
+      - name: Merge PR after checks green
+        if: steps.findpr.outputs.pr != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr merge "${{ steps.findpr.outputs.pr }}" --repo "${{ github.repository }}" --squash --delete-branch

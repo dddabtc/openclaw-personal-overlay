@@ -14,6 +14,10 @@ on:
         required: false
         type: string
         default: ''
+      issue_number:
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -60,6 +64,7 @@ jobs:
             - reason: `${{ inputs.reason }}`
             - source_run_id: `${{ inputs.source_run_id }}`
             - upstream_tag: `${{ inputs.upstream_tag }}`
+            - issue_number: `${{ inputs.issue_number }}`
           labels: |
             autofix
       - name: Ensure PR exists
@@ -96,6 +101,12 @@ jobs:
           done
           merged=$(gh pr view "$PR" --repo "${{ github.repository }}" --json mergedAt --jq '.mergedAt != null')
           [ "$merged" = "true" ] || { echo "PR not merged in time"; exit 1; }
+      - name: Close mapped autofix issue
+        if: inputs.issue_number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue close "${{ inputs.issue_number }}" --repo "${{ github.repository }}" --comment "Auto-fixed via PR #${{ needs.fix-and-pr.outputs.pr_number }} and merged."
       - name: Re-trigger force auto-compat full run
         env:
           GH_TOKEN: ${{ github.token }}
