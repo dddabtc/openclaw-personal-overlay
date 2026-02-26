@@ -58,6 +58,52 @@ jobs:
           echo "upstream_version=${upstream_version}" >> "$GITHUB_OUTPUT"
           echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve compatibility target
+        id: compat
+        env:
+          UPSTREAM_VERSION: ${{ steps.normalize.outputs.upstream_version }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          upstream_version = os.environ["UPSTREAM_VERSION"]
+          with open("compatibility.json", "r", encoding="utf-8") as f:
+              data = json.load(f)
+
+          supported = data.get("supported", [])
+          target = None
+
+          for entry in supported:
+              if entry.get("openclawVersion") == upstream_version and entry.get("status") != "deprecated":
+                  target = entry
+                  break
+
+          if target is None:
+              for entry in supported:
+                  if entry.get("status") != "deprecated":
+                      target = entry
+                      break
+
+          if target is None:
+              print("No supported compatibility entry found", file=sys.stderr)
+              sys.exit(1)
+
+          required = ["openclawVersion", "commitSha", "upstreamBaseCommit", "patchSetDir"]
+          missing = [k for k in required if not target.get(k)]
+          if missing:
+              print(f"Compatibility entry missing fields: {missing}", file=sys.stderr)
+              sys.exit(1)
+
+          out = os.environ["GITHUB_OUTPUT"]
+          with open(out, "a", encoding="utf-8") as gh:
+              gh.write(f"target_version={target['openclawVersion']}\n")
+              gh.write(f"target_commit={target['commitSha']}\n")
+              gh.write(f"upstream_base={target['upstreamBaseCommit']}\n")
+              gh.write(f"patch_set_dir={target['patchSetDir']}\n")
+          PY
+
       - name: Update CHANGELOG
         env:
           RELEASE_TAG: ${{ steps.normalize.outputs.release_tag }}
@@ -93,6 +139,30 @@ jobs:
           git commit -m "chore(release): update changelog for ${{ steps.normalize.outputs.release_tag }}"
           git push origin HEAD:${{ github.ref_name }}
 
+      - name: Prepare patched upstream dist
+        env:
+          PATCH_SET_DIR: ${{ steps.compat.outputs.patch_set_dir }}
+          UPSTREAM_BASE: ${{ steps.compat.outputs.upstream_base }}
+        run: |
+          test -d "$PATCH_SET_DIR"
+          git clone --filter=blob:none --no-checkout https://github.com/openclaw/openclaw.git /tmp/openclaw-src
+          cd /tmp/openclaw-src
+          git checkout "$UPSTREAM_BASE"
+          mapfile -t patch_files < <(find "${GITHUB_WORKSPACE}/${PATCH_SET_DIR}" -maxdepth 1 -type f -name '*.patch' | sort)
+          if [ "${#patch_files[@]}" -eq 0 ]; then
+            echo "No patch files found in ${PATCH_SET_DIR}" >&2
+            exit 1
+          fi
+          git am "${patch_files[@]}"
+
+      - name: Build dist overlay package
+        env:
+          OVERLAY_VERSION: ${{ steps.normalize.outputs.release_tag }}
+          TARGET_VERSION: ${{ steps.compat.outputs.target_version }}
+          TARGET_COMMIT: ${{ steps.compat.outputs.target_commit }}
+        run: |
+          scripts/build-dist-overlay.sh /tmp/openclaw-src dist-overlay
+
       - name: Create tag and release
         env:
           GH_TOKEN: ${{ secrets.OC_GH_TOKEN }}
@@ -109,3 +179,10 @@ jobs:
           Source: ${{ inputs.source_run_url }}
           EOF
           gh release view "${RELEASE_TAG}" >/dev/null 2>&1 || gh release create "${RELEASE_TAG}" --title "${RELEASE_TAG}" --notes-file /tmp/release-notes.md
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ secrets.OC_GH_TOKEN }}
+          RELEASE_TAG: ${{ steps.normalize.outputs.release_tag }}
+        run: |
+          gh release upload "${RELEASE_TAG}" dist-overlay.tar.gz dist-overlay.tar.gz.sha256 --clobber
