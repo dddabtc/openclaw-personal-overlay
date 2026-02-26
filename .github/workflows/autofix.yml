@@ -238,7 +238,8 @@ jobs:
           Auto-approved by autofix closed-loop pipeline.
           EOF
           gh pr review "$PR" --repo "${{ github.repository }}" --approve --body-file /tmp/review-body.md || true
-          gh pr merge "$PR" --repo "${{ github.repository }}" --auto --squash --delete-branch
+          # Repo may disable auto-merge; we already waited CI success, so merge directly.
+          gh pr merge "$PR" --repo "${{ github.repository }}" --squash --delete-branch
 
       - name: Close mapped issue
         if: inputs.issue_number != ''
