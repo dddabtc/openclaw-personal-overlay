@@ -284,7 +284,7 @@ jobs:
           gh pr merge "$pr" --repo "$GITHUB_REPOSITORY" --auto --squash --delete-branch
 
       - name: Trigger autofix dispatch (any failure fallback)
-        if: failure()
+        if: failure() && steps.apply_patch.outcome == 'success'
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ github.token }}

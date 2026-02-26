@@ -57,7 +57,7 @@ jobs:
             fi
           fi
 
-          DEDUPE_KEY="${WORKFLOW}|${BRANCH}|${UPSTREAM_VERSION}"
+          DEDUPE_KEY="${WORKFLOW}|${BRANCH}|${UPSTREAM_VERSION}|run:${RUN_ID}"
           TITLE="[autofix] ${WORKFLOW} failed on ${BRANCH}"
 
           echo "repo=$REPO" >> "$GITHUB_OUTPUT"
