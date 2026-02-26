@@ -148,6 +148,8 @@ jobs:
           git clone --filter=blob:none --no-checkout https://github.com/openclaw/openclaw.git /tmp/openclaw-src
           cd /tmp/openclaw-src
           git checkout "$UPSTREAM_BASE"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           mapfile -t patch_files < <(find "${GITHUB_WORKSPACE}/${PATCH_SET_DIR}" -maxdepth 1 -type f -name '*.patch' | sort)
           if [ "${#patch_files[@]}" -eq 0 ]; then
             echo "No patch files found in ${PATCH_SET_DIR}" >&2
