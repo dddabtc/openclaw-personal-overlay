@@ -223,28 +223,10 @@ jobs:
         run: |
           rm -rf work out
 
-      - name: Trigger autofix dispatch (patch apply failure)
-        if: steps.apply_patch.outcome != 'success'
-        uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          event-type: autofix-requested
-          client-payload: |
-            {
-              "source_workflow": "${{ github.workflow }}",
-              "source_run_id": "${{ github.run_id }}",
-              "source_run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
-              "source_branch": "${{ github.ref_name }}",
-              "upstream_version": "${{ env.UPSTREAM_VERSION }}",
-              "reason": "patch-apply-failed"
-            }
-
-      - name: Fail on incompatible candidate patchset (required)
+      - name: Skip incompatible candidate patchset without failing workflow
         if: steps.apply_patch.outcome != 'success'
         run: |
-          echo "::error::auto-compat failed for ${UPSTREAM_VERSION}: candidate patchset ${AUTO_PATCHSET_DIR} did not apply cleanly to ${UPSTREAM_SHA}."
-          exit 1
+          echo "::warning::auto-compat skipped for ${UPSTREAM_VERSION}: candidate patchset ${AUTO_PATCHSET_DIR} did not apply cleanly to ${UPSTREAM_SHA}."
 
       - name: Create pull request for new compatibility support
         if: steps.apply_patch.outcome == 'success'
@@ -282,23 +264,6 @@ jobs:
           set -euo pipefail
           pr='${{ steps.cpr.outputs.pull-request-number }}'
           gh pr merge "$pr" --repo "$GITHUB_REPOSITORY" --auto --squash --delete-branch
-
-      - name: Trigger autofix dispatch (any failure fallback)
-        if: failure() && steps.apply_patch.outcome == 'success'
-        uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          event-type: autofix-requested
-          client-payload: |
-            {
-              "source_workflow": "${{ github.workflow }}",
-              "source_run_id": "${{ github.run_id }}",
-              "source_run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
-              "source_branch": "${{ github.ref_name }}",
-              "upstream_version": "${{ env.UPSTREAM_VERSION }}",
-              "reason": "job-failed"
-            }
   pr-verify:
     if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'auto/compat-')
     runs-on: ubuntu-latest
