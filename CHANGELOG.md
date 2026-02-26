@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [Unreleased]
+
+### Bug Fixes
+- `fix(release)`: build and upload `dist-overlay.tar.gz` and `dist-overlay.tar.gz.sha256` when creating GitHub releases
+
 ## [overlay-v2026.2.21-2] — 2026-02-21 (latest)
 
 ### Features
