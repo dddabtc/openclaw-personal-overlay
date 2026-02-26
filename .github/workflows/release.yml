@@ -139,6 +139,10 @@ jobs:
           git commit -m "chore(release): update changelog for ${{ steps.normalize.outputs.release_tag }}"
           git push origin HEAD:${{ github.ref_name }}
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Prepare patched upstream dist
         env:
           PATCH_SET_DIR: ${{ steps.compat.outputs.patch_set_dir }}
@@ -156,6 +160,9 @@ jobs:
             exit 1
           fi
           git am "${patch_files[@]}"
+          corepack enable
+          pnpm install --no-frozen-lockfile
+          pnpm -s build
 
       - name: Build dist overlay package
         env:
