@@ -77,8 +77,11 @@ jobs:
           git checkout -b autofix/${{ github.run_id }}-empty
           git commit --allow-empty -m "fix(autofix): empty fix marker"
           git push -u origin HEAD
+          cat > /tmp/pr-body.md <<'EOF'
+          Auto-generated empty fix PR.
+          EOF
           pr_url=$(gh pr create --repo "${{ github.repository }}" --base main --head "autofix/${{ github.run_id }}-empty" \
-            --title "fix(autofix): empty fix marker" --body "Auto-generated empty fix PR")
+            --title "fix(autofix): empty fix marker" --body-file /tmp/pr-body.md)
           pr_number=$(gh pr view "$pr_url" --repo "${{ github.repository }}" --json number --jq '.number')
           echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
         env:
