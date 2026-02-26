@@ -139,6 +139,7 @@ jobs:
 
           merged="false"
           merge_error=""
+          auto_merge_set="false"
           for i in $(seq 1 36); do
             set +e
             merge_out=$(gh pr merge "$PR" --repo "${{ github.repository }}" --squash --delete-branch 2>&1)
@@ -154,7 +155,26 @@ jobs:
             merge_error="$merge_out"
             echo "Merge attempt $i blocked: $merge_error"
 
-            if echo "$merge_error" | grep -qiE "required status check|review|required|not mergeable|base branch policy|protected branch"; then
+            if echo "$merge_error" | grep -qiE "base branch policy|protected branch|not mergeable"; then
+              if [ "$auto_merge_set" != "true" ]; then
+                if gh pr merge "$PR" --repo "${{ github.repository }}" --auto --squash --delete-branch; then
+                  auto_merge_set="true"
+                  echo "Enabled auto-merge for PR #$PR"
+                else
+                  echo "Unable to enable auto-merge; continuing retry loop"
+                fi
+              fi
+              sleep 10
+              state=$(gh pr view "$PR" --repo "${{ github.repository }}" --json state --jq '.state')
+              if [ "$state" = "MERGED" ]; then
+                merged="true"
+                echo "PR #$PR merged by policy/auto-merge"
+                break
+              fi
+              continue
+            fi
+
+            if echo "$merge_error" | grep -qiE "required status check|review|required"; then
               sleep 10
               continue
             fi
