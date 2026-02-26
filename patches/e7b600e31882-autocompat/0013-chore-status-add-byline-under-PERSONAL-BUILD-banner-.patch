@@ -1,0 +1,52 @@
+From 64596bfef501cfca85d082bd5392ce9846438750 Mon Sep 17 00:00:00 2001
+From: zhaod <zhaod@local>
+Date: Fri, 20 Feb 2026 23:49:29 -0400
+Subject: [PATCH 13/16] chore(status): add byline under PERSONAL BUILD banner
+ and document format
+
+---
+ docs/debug/telegram-control-inbound-test.md | 10 ++++++++++
+ src/auto-reply/status.ts                    |  2 ++
+ 2 files changed, 12 insertions(+)
+
+diff --git a/docs/debug/telegram-control-inbound-test.md b/docs/debug/telegram-control-inbound-test.md
+index 990347f94..61ad92486 100755
+--- a/docs/debug/telegram-control-inbound-test.md
++++ b/docs/debug/telegram-control-inbound-test.md
+@@ -102,3 +102,13 @@ python3 scripts/test_telegram_subsession_pressure.py \
+   --messages "ssh 到192.168.1.136 用户名是 zhaod，执行 hostname 并把结果告诉我" \
+   --rounds 1 --pause 0.5 --settle 20
+ ```
++
++## Status banner format (current)
++
++The `/status` output includes a custom banner block:
++
++1. `🦞 OpenClaw <version> (<commit>)`
++2. `🏷️ PERSONAL BUILD · <dist-publish-time>(UTC)`
++3. `by: https://github.com/dddabtc`
++
++This is rendered in the fast status path currently used on 113.
+diff --git a/src/auto-reply/status.ts b/src/auto-reply/status.ts
+index 5e9b2eb39..eeb60d6d9 100644
+--- a/src/auto-reply/status.ts
++++ b/src/auto-reply/status.ts
+@@ -666,6 +666,7 @@ export function buildStatusMessage(args: StatusArgs): string {
+   const commit = resolveCommitHash();
+   const versionLine = `🦞 OpenClaw ${VERSION}${commit ? ` (${commit})` : ""}`;
+   const personalLine = `🏷️ PERSONAL BUILD · ${resolveDistPublishDateTime()}`;
++  const byLine = `by: https://github.com/dddabtc`;
+   const usagePair = formatUsagePair(inputTokens, outputTokens);
+   const cacheLine = formatCacheLine(inputTokens, cacheRead, cacheWrite);
+   const costLine = costLabel ? `💵 Cost: ${costLabel}` : null;
+@@ -677,6 +678,7 @@ export function buildStatusMessage(args: StatusArgs): string {
+   return [
+     versionLine,
+     personalLine,
++    byLine,
+     args.timeLine,
+     modelLine,
+     fallbackLine,
+-- 
+2.25.1
+

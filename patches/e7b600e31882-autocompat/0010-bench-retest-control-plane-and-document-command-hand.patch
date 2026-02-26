@@ -1,0 +1,436 @@
+From 65260c72fbfeed19ccee0ed98f06c68c2556d802 Mon Sep 17 00:00:00 2001
+From: dddabtc <zhaodali78@gmail.com>
+Date: Fri, 20 Feb 2026 17:38:53 -0400
+Subject: [PATCH 10/16] bench: retest control-plane and document command
+ handling
+
+---
+ README.md                                     |  25 ++
+ .../plans/control-plane-command-handling.md   |  99 ++++++++
+ scripts/control-plane-benchmark.ts            | 217 +++++++++++++++---
+ 3 files changed, 309 insertions(+), 32 deletions(-)
+ create mode 100644 docs/experiments/plans/control-plane-command-handling.md
+
+diff --git a/README.md b/README.md
+index 1dcad2b7e..5f3bb27b7 100644
+--- a/README.md
++++ b/README.md
+@@ -280,6 +280,31 @@ Send these in WhatsApp/Telegram/Slack/Google Chat/Microsoft Teams/WebChat (group
+ - `/restart` — restart the gateway (owner-only in groups)
+ - `/activation mention|always` — group activation toggle (groups only)
+ 
++### Control-plane command handling (`/stop`, `/status`)
++
++`/stop` and `/status` are handled as control-plane commands (not normal session/data-plane chat turns):
++
++- strict full-match routing: `^/(stop|status)(?:@[\w_]+)?$`
++- `/status` uses a fast path (state read + immediate reply)
++- `/stop` uses two-stage reply (fast ACK, then final abort result)
++- command lifecycle is persisted under `~/.openclaw/{adapters,agents}/...` for audit/recovery
++
++Quick benchmark (concurrent + mixed):
++
++```bash
++node --import tsx scripts/control-plane-benchmark.ts
++# optional: ROUNDS=12 node --import tsx scripts/control-plane-benchmark.ts
++```
++
++Targets:
++
++- `/stop` ACK p95 < 200ms
++- `/status` p95 < 500ms
++- `/stop` total dispatch p95 < 2000ms
++- no collective timeout explosion under burst rounds
++
++Design + test details: `docs/experiments/plans/control-plane-command-handling.md`
++
+ ## Apps (optional)
+ 
+ The Gateway alone delivers a great experience. All apps are optional and add extra features.
+diff --git a/docs/experiments/plans/control-plane-command-handling.md b/docs/experiments/plans/control-plane-command-handling.md
+new file mode 100644
+index 000000000..f46162ef6
+--- /dev/null
++++ b/docs/experiments/plans/control-plane-command-handling.md
+@@ -0,0 +1,99 @@
++# Control-plane command handling (`/stop`, `/status`)
++
++Status: implementation + pressure-test aligned (2026-02)
++
++## Why
++
++Under load, command UX must stay responsive even when normal session/data-plane work is busy.
++The command path now follows a control-plane-first design so `/stop` and `/status` do not queue behind LLM/tool work.
++
++## Design goals
++
++1. **Control/Data split**: command handling is not treated as normal chat business flow.
++2. **Agent-scoped execution**: command queue/events are bound to agent state, not per-session lane.
++3. **Adapter ingress isolation**: each adapter writes its own ingress command log file.
++4. **Fast ACK**: `/stop` immediately replies with an ACK before abort dispatch.
++5. **Durable tracing**: command lifecycle is persisted and replayable.
++6. **Deterministic recovery**: non-terminal historical commands are marked as recovered on startup/path entry.
++
++## Current flow (implemented)
++
++### Strict command matching
++
++Only full-match commands enter control plane:
++
++```regex
++^/(stop|status)(?:@[\w_]+)?$
++```
++
++No partial/contains matching.
++
++### `/status` (fast path)
++
++- Bypasses queue.
++- Reads control state quickly.
++- Replies directly with status summary (`Status#xxxxxx: ...`).
++
++### `/stop` (two-stage)
++
++1. Persist enqueue + state update.
++2. Send immediate ACK (`Stopping... [#xxxxxx]`).
++3. Dispatch fast abort.
++4. Send final result (`Stopped ... [#xxxxxx]` or timeout/failure reason).
++
++## Durable files / evidence points
++
++Under `~/.openclaw` (or `OPENCLAW_STATE_DIR`):
++
++```text
++adapters/<adapter>/command-log.jsonl
++agents/<agentId>/control-queue.jsonl
++agents/<agentId>/control-events.jsonl
++agents/<agentId>/control-state.json
++```
++
++Key event types to validate:
++
++- `ENQUEUED`
++- `ACK_SENT`
++- `DONE` / `FAILED` / `TIMED_OUT` / `TIMED_OUT_RECOVERED`
++
++## Performance targets (SLO)
++
++- `/stop` ACK p95 < **200ms**
++- `/status` p95 < **500ms**
++- `/stop` total dispatch p95 < **2000ms**
++- Burst test should show **no collective timeout explosion**
++
++## Pressure-test method
++
++Reference script:
++
++- `scripts/control-plane-benchmark.ts`
++
++Run:
++
++```bash
++node --import tsx scripts/control-plane-benchmark.ts
++# optional rounds override (minimum 10 enforced by script)
++ROUNDS=12 node --import tsx scripts/control-plane-benchmark.ts
++```
++
++Scenario (per round):
++
++- `/stop` x5 + `/status` x5
++- concurrent mixed workload
++- repeated for >= 10 rounds
++
++Output includes:
++
++- per-round mean/p95/max
++- overall mean/p95/max
++- timeout counters
++- collective-timeout-burst flag
++- control-plane evidence (file deltas + event type counts)
++
++## Notes
++
++- This benchmark targets command-path logic and control-plane durability/latency, not external IM network jitter.
++- If command-path instrumentation changes, update this doc and script together to keep acceptance criteria stable.
+diff --git a/scripts/control-plane-benchmark.ts b/scripts/control-plane-benchmark.ts
+index cffce8847..1c3118042 100644
+--- a/scripts/control-plane-benchmark.ts
++++ b/scripts/control-plane-benchmark.ts
+@@ -1,8 +1,22 @@
++import fs from "node:fs";
++import os from "node:os";
++import path from "node:path";
+ import { performance } from "node:perf_hooks";
+ import { dispatchReplyFromConfig } from "../src/auto-reply/reply/dispatch-from-config.js";
+ import type { ReplyDispatcher } from "../src/auto-reply/reply/reply-dispatcher.js";
+ import { buildTestCtx } from "../src/auto-reply/reply/test-ctx.js";
+ import type { OpenClawConfig } from "../src/config/config.js";
++import { resolveStateDir } from "../src/config/paths.js";
++
++type Sample = { ms: number; timedOut: boolean };
++
++type RoundStats = {
++  round: number;
++  stopAck: { meanMs: number; p95Ms: number; maxMs: number; timeouts: number; samples: number };
++  stopTotal: { meanMs: number; p95Ms: number; maxMs: number; timeouts: number; samples: number };
++  status: { meanMs: number; p95Ms: number; maxMs: number; timeouts: number; samples: number };
++  collectiveTimeoutBurst: boolean;
++};
+ 
+ function percentile(values: number[], p: number): number {
+   if (values.length === 0) {
+@@ -13,24 +27,93 @@ function percentile(values: number[], p: number): number {
+   return sorted[Math.max(0, idx)] ?? 0;
+ }
+ 
++function mean(values: number[]): number {
++  if (values.length === 0) {
++    return 0;
++  }
++  return values.reduce((acc, v) => acc + v, 0) / values.length;
++}
++
++function summarize(samples: Sample[]) {
++  const values = samples.map((s) => s.ms);
++  const timeouts = samples.filter((s) => s.timedOut).length;
++  return {
++    meanMs: mean(values),
++    p95Ms: percentile(values, 95),
++    maxMs: values.length > 0 ? Math.max(...values) : 0,
++    timeouts,
++    samples: samples.length,
++  };
++}
++
++function tailJsonl(filePath: string, fromLine: number): unknown[] {
++  if (!fs.existsSync(filePath)) {
++    return [];
++  }
++  const lines = fs
++    .readFileSync(filePath, "utf8")
++    .split("\n")
++    .filter((l) => l.trim().length > 0);
++  return lines.slice(fromLine).map((line) => {
++    try {
++      return JSON.parse(line);
++    } catch {
++      return { __raw: line };
++    }
++  });
++}
++
++function lineCount(filePath: string): number {
++  if (!fs.existsSync(filePath)) {
++    return 0;
++  }
++  return fs
++    .readFileSync(filePath, "utf8")
++    .split("\n")
++    .filter((l) => l.trim().length > 0).length;
++}
++
+ async function run() {
++  const rounds = Math.max(10, Number.parseInt(process.env.ROUNDS ?? "10", 10) || 10);
++  const stopPerRound = 5;
++  const statusPerRound = 5;
++
+   const cfg = {} as OpenClawConfig;
+-  const ack: number[] = [];
+-  const status: number[] = [];
+-  const dispatch: number[] = [];
++  const stopAck: Sample[] = [];
++  const stopTotal: Sample[] = [];
++  const status: Sample[] = [];
++  const perRound: RoundStats[] = [];
++
++  const stateDir = resolveStateDir();
++  const adapterLog = path.join(stateDir, "adapters", "whatsapp", "command-log.jsonl");
++  const queueLog = path.join(stateDir, "agents", "main", "control-queue.jsonl");
++  const eventsLog = path.join(stateDir, "agents", "main", "control-events.jsonl");
++  const stateFile = path.join(stateDir, "agents", "main", "control-state.json");
++
++  const adapterStart = lineCount(adapterLog);
++  const queueStart = lineCount(queueLog);
++  const eventsStart = lineCount(eventsLog);
+ 
+-  for (let round = 0; round < 5; round += 1) {
++  for (let round = 1; round <= rounds; round += 1) {
++    const roundStopAck: Sample[] = [];
++    const roundStopTotal: Sample[] = [];
++    const roundStatus: Sample[] = [];
+     const jobs: Promise<void>[] = [];
+-    for (let i = 0; i < 5; i += 1) {
++
++    for (let i = 0; i < stopPerRound; i += 1) {
+       jobs.push(
+         (async () => {
+           const t0 = performance.now();
+           const marks: number[] = [];
++          const finalTexts: string[] = [];
+           const dispatcher: ReplyDispatcher = {
+             sendToolResult: () => true,
+             sendBlockReply: () => true,
+-            sendFinalReply: () => {
++            sendFinalReply: (payload) => {
+               marks.push(performance.now());
++              if (typeof payload?.text === "string") {
++                finalTexts.push(payload.text);
++              }
+               return true;
+             },
+             waitForIdle: async () => {},
+@@ -42,21 +125,29 @@ async function run() {
+             cfg,
+             dispatcher,
+           });
+-          if (marks.length >= 1) {
+-            ack.push(marks[0] - t0);
+-          }
+-          if (marks.length >= 2) {
+-            dispatch.push(marks[1] - marks[0]);
++
++          if (marks.length > 0) {
++            roundStopAck.push({ ms: marks[0] - t0, timedOut: false });
+           }
++          const totalMs = performance.now() - t0;
++          const timedOut = finalTexts.some((t) => /timeout/i.test(t));
++          roundStopTotal.push({ ms: totalMs, timedOut });
+         })(),
+       );
++    }
++
++    for (let i = 0; i < statusPerRound; i += 1) {
+       jobs.push(
+         (async () => {
+           const t0 = performance.now();
++          let finalText = "";
+           const dispatcher: ReplyDispatcher = {
+             sendToolResult: () => true,
+             sendBlockReply: () => true,
+-            sendFinalReply: () => true,
++            sendFinalReply: (payload) => {
++              finalText = String(payload?.text ?? "");
++              return true;
++            },
+             waitForIdle: async () => {},
+             getQueuedCounts: () => ({ tool: 0, block: 0, final: 1 }),
+             markComplete: () => {},
+@@ -66,33 +157,95 @@ async function run() {
+             cfg,
+             dispatcher,
+           });
+-          status.push(performance.now() - t0);
++
++          roundStatus.push({ ms: performance.now() - t0, timedOut: /timeout/i.test(finalText) });
+         })(),
+       );
+     }
++
+     await Promise.all(jobs);
++
++    stopAck.push(...roundStopAck);
++    stopTotal.push(...roundStopTotal);
++    status.push(...roundStatus);
++
++    const s1 = summarize(roundStopAck);
++    const s2 = summarize(roundStopTotal);
++    const s3 = summarize(roundStatus);
++    const collectiveTimeoutBurst = s2.timeouts + s3.timeouts >= 5;
++
++    perRound.push({
++      round,
++      stopAck: s1,
++      stopTotal: s2,
++      status: s3,
++      collectiveTimeoutBurst,
++    });
+   }
+ 
+-  const ackP95 = percentile(ack, 95);
+-  const statusP95 = percentile(status, 95);
+-  const dispatchP95 = percentile(dispatch, 95);
+-
+-  console.log(
+-    JSON.stringify(
+-      {
+-        rounds: 5,
+-        samples: { ack: ack.length, status: status.length, dispatch: dispatch.length },
+-        p95: { ackMs: ackP95, statusMs: statusP95, stopDispatchMs: dispatchP95 },
+-        pass: {
+-          ack: ackP95 < 200,
+-          status: statusP95 < 500,
+-          dispatch: dispatchP95 < 2000,
+-        },
++  const adapterRecords = tailJsonl(adapterLog, adapterStart) as Array<Record<string, unknown>>;
++  const queueRecords = tailJsonl(queueLog, queueStart) as Array<Record<string, unknown>>;
++  const eventRecords = tailJsonl(eventsLog, eventsStart) as Array<Record<string, unknown>>;
++
++  const eventTypeCount = eventRecords.reduce<Record<string, number>>((acc, r) => {
++    const eventType = r.type;
++    const k = typeof eventType === "string" && eventType.trim().length > 0 ? eventType : "unknown";
++    acc[k] = (acc[k] ?? 0) + 1;
++    return acc;
++  }, {});
++
++  const adapterReceived = adapterRecords.filter((r) => r.type === "RECEIVED").length;
++  const queueStop = queueRecords.filter((r) => r.normalized === "/stop").length;
++  const doneEvents = (eventTypeCount.DONE ?? 0) > 0;
++  const ackEvents = (eventTypeCount.ACK_SENT ?? 0) > 0;
++
++  const overall = {
++    stopAck: summarize(stopAck),
++    stopTotal: summarize(stopTotal),
++    status: summarize(status),
++  };
++  const collectiveTimeoutBurst = perRound.some((r) => r.collectiveTimeoutBurst);
++
++  const slo = {
++    ackP95Lt200: overall.stopAck.p95Ms < 200,
++    statusP95Lt500: overall.status.p95Ms < 500,
++    stopTotalP95Lt2000: overall.stopTotal.p95Ms < 2000,
++  };
++
++  const result = {
++    rounds,
++    scenario: {
++      perRound: { stop: stopPerRound, status: statusPerRound, mode: "concurrent" },
++      rateLimitContext: "same adapter+agent path, write/read mixed",
++      stateDir,
++    },
++    perRound,
++    overall,
++    collectiveTimeoutBurst,
++    controlPlaneEvidence: {
++      files: { adapterLog, queueLog, eventsLog, stateFile },
++      deltas: {
++        adapterRecords: adapterRecords.length,
++        queueRecords: queueRecords.length,
++        eventRecords: eventRecords.length,
+       },
+-      null,
+-      2,
+-    ),
+-  );
++      checks: {
++        adapterReceived,
++        queueStop,
++        eventTypeCount,
++        hasAckSent: ackEvents,
++        hasDone: doneEvents,
++        stateFileExists: fs.existsSync(stateFile),
++      },
++      verified:
++        adapterReceived > 0 && queueStop > 0 && ackEvents && doneEvents && fs.existsSync(stateFile),
++    },
++    slo,
++    pass: Object.values(slo).every(Boolean) && !collectiveTimeoutBurst,
++    host: os.hostname(),
++  };
++
++  console.log(JSON.stringify(result, null, 2));
+ }
+ 
+ void run();
+-- 
+2.25.1
+

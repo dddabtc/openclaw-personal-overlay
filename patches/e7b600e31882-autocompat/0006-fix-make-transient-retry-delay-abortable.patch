@@ -1,0 +1,121 @@
+From 3ba3bc991e8b8e539ec22873f8e6763d8643e8d9 Mon Sep 17 00:00:00 2001
+From: zhaod <zhaod@local>
+Date: Fri, 20 Feb 2026 14:47:35 -0400
+Subject: [PATCH 06/16] fix: make transient retry delay abortable
+
+---
+ .../reply/agent-runner-execution.ts           | 13 ++--
+ .../agent-runner.misc.runreplyagent.test.ts   | 69 +++++++++++++++++++
+ 2 files changed, 78 insertions(+), 4 deletions(-)
+
+diff --git a/src/auto-reply/reply/agent-runner-execution.ts b/src/auto-reply/reply/agent-runner-execution.ts
+index a9bd537b5..cde64d227 100644
+--- a/src/auto-reply/reply/agent-runner-execution.ts
++++ b/src/auto-reply/reply/agent-runner-execution.ts
+@@ -1,5 +1,6 @@
+ import crypto from "node:crypto";
+ import fs from "node:fs";
++import { setTimeout as delay } from "node:timers/promises";
+ import { runCliAgent } from "../../agents/cli-runner.js";
+ import { getCliSessionId } from "../../agents/cli-session.js";
+ import { runWithModelFallback } from "../../agents/model-fallback.js";
+@@ -557,10 +558,14 @@ export async function runAgentTurnWithFallback(params: {
+         defaultRuntime.error(
+           `Transient HTTP provider error before reply (${message}). Retrying once in ${TRANSIENT_HTTP_RETRY_DELAY_MS}ms.`,
+         );
+-        await new Promise<void>((resolve) => {
+-          setTimeout(resolve, TRANSIENT_HTTP_RETRY_DELAY_MS);
+-        });
+-        continue;
++        try {
++          await delay(TRANSIENT_HTTP_RETRY_DELAY_MS, undefined, {
++            signal: params.opts?.abortSignal,
++          });
++          continue;
++        } catch {
++          // Abort should short-circuit the retry wait and fall through to final error handling.
++        }
+       }
+ 
+       defaultRuntime.error(`Embedded agent failed before reply: ${message}`);
+diff --git a/src/auto-reply/reply/agent-runner.misc.runreplyagent.test.ts b/src/auto-reply/reply/agent-runner.misc.runreplyagent.test.ts
+index 14819dd9c..115211704 100644
+--- a/src/auto-reply/reply/agent-runner.misc.runreplyagent.test.ts
++++ b/src/auto-reply/reply/agent-runner.misc.runreplyagent.test.ts
+@@ -1409,4 +1409,73 @@ describe("runReplyAgent transient HTTP retry", () => {
+     const payload = Array.isArray(result) ? result[0] : result;
+     expect(payload?.text).toContain("Recovered response");
+   });
++
++  it("aborts transient retry delay immediately when abort signal fires", async () => {
++    vi.useFakeTimers();
++    runEmbeddedPiAgentMock.mockRejectedValueOnce(new Error("521 Cloudflare"));
++
++    const typing = createMockTypingController();
++    const sessionCtx = {
++      Provider: "telegram",
++      MessageSid: "msg",
++    } as unknown as TemplateContext;
++    const resolvedQueue = { mode: "interrupt" } as unknown as QueueSettings;
++    const followupRun = {
++      prompt: "hello",
++      summaryLine: "hello",
++      enqueuedAt: Date.now(),
++      run: {
++        sessionId: "session",
++        sessionKey: "main",
++        messageProvider: "telegram",
++        sessionFile: "/tmp/session.jsonl",
++        workspaceDir: "/tmp",
++        config: {},
++        skillsSnapshot: {},
++        provider: "anthropic",
++        model: "claude",
++        thinkLevel: "low",
++        verboseLevel: "off",
++        elevatedLevel: "off",
++        bashElevated: {
++          enabled: false,
++          allowed: false,
++          defaultLevel: "off",
++        },
++        timeoutMs: 1_000,
++        blockReplyBreak: "message_end",
++      },
++    } as unknown as FollowupRun;
++
++    const abort = new AbortController();
++    const runPromise = runReplyAgent({
++      commandBody: "hello",
++      followupRun,
++      queueKey: "main",
++      resolvedQueue,
++      shouldSteer: false,
++      shouldFollowup: false,
++      isActive: false,
++      isStreaming: false,
++      typing,
++      sessionCtx,
++      opts: { abortSignal: abort.signal },
++      defaultModel: "anthropic/claude-opus-4-5",
++      resolvedVerboseLevel: "off",
++      isNewSession: false,
++      blockStreamingEnabled: false,
++      resolvedBlockStreamingBreak: "message_end",
++      shouldInjectGroupIntro: false,
++      typingMode: "instant",
++    });
++
++    abort.abort(new Error("manual abort"));
++    await vi.advanceTimersByTimeAsync(1);
++    const result = await runPromise;
++
++    expect(runEmbeddedPiAgentMock).toHaveBeenCalledTimes(1);
++    const payload = Array.isArray(result) ? result[0] : result;
++    expect(String(payload?.text ?? "")).toContain("Agent failed before reply");
++  });
++
+ });
+-- 
+2.25.1
+

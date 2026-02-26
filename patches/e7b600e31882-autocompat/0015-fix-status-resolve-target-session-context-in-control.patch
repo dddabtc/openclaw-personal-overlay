@@ -1,0 +1,97 @@
+From 2127404f6e1848da6c8f99431ff6263ed9a65ed8 Mon Sep 17 00:00:00 2001
+From: zhaod <zhaod@local>
+Date: Sun, 22 Feb 2026 19:43:26 -0400
+Subject: [PATCH 15/16] fix(status): resolve target session context in
+ control-plane fast path
+
+The /status command routed through the control-plane fast path was
+showing 0/200k context because it used the command-lane session
+(which has no conversation history) instead of the target chat session.
+
+Now loads the target session entry via CommandTargetSessionKey, resolving
+accurate context usage, compaction count, model overrides, and queue depth.
+---
+ src/auto-reply/control-plane.ts | 46 ++++++++++++++++++++++++++++-----
+ 1 file changed, 40 insertions(+), 6 deletions(-)
+
+diff --git a/src/auto-reply/control-plane.ts b/src/auto-reply/control-plane.ts
+index 76b99566e..3abf9848d 100644
+--- a/src/auto-reply/control-plane.ts
++++ b/src/auto-reply/control-plane.ts
+@@ -2,11 +2,16 @@ import crypto from "node:crypto";
+ import fs from "node:fs";
+ import path from "node:path";
+ import { resolveSessionAgentId } from "../agents/agent-scope.js";
++import { lookupContextTokens } from "../agents/context.js";
++import { DEFAULT_CONTEXT_TOKENS } from "../agents/defaults.js";
+ import type { OpenClawConfig } from "../config/config.js";
+ import { resolveStateDir } from "../config/paths.js";
++import { resolveStorePath } from "../config/sessions/paths.js";
++import { loadSessionStore } from "../config/sessions/store.js";
+ import { resolveCommandAuthorization } from "./command-auth.js";
+ import { normalizeCommandBody } from "./commands-registry.js";
+ import { formatAbortReplyText, tryFastAbortFromMessage } from "./reply/abort.js";
++import { getFollowupQueueDepth, resolveQueueSettings } from "./reply/queue.js";
+ import type { ReplyDispatcher } from "./reply/reply-dispatcher.js";
+ import { buildStatusMessage } from "./status.js";
+ import type { FinalizedMsgContext } from "./templating.js";
+@@ -332,21 +337,50 @@ export async function maybeHandleControlPlaneCommand(params: {
+   adapterWriter.write({ type: "RECEIVED", at: now, commandId, raw: matched.rawTrimmed });
+ 
+   if (matched.command === "status") {
++    // Resolve the *target* session (the main chat session) rather than the
++    // command-lane session so that context/compaction/usage stats are accurate.
++    const targetSessionKey = ctx.CommandTargetSessionKey?.trim() || ctx.SessionKey;
++    const targetAgentId = targetSessionKey
++      ? resolveSessionAgentId({ sessionKey: targetSessionKey, config: cfg })
++      : agentId;
++    const storePath = resolveStorePath(cfg.session?.store, { agentId: targetAgentId });
++    const sessionStore = loadSessionStore(storePath, { skipCache: true });
++    const targetEntry = targetSessionKey ? sessionStore[targetSessionKey] : undefined;
++
++    const agentDefaults = cfg.agents?.defaults ?? {};
++    const selectedModel =
++      targetEntry?.modelOverride ?? agentDefaults.model?.primary ?? "unknown/unknown";
++    const contextTokens =
++      targetEntry?.contextTokens ??
++      agentDefaults.contextTokens ??
++      lookupContextTokens(selectedModel) ??
++      DEFAULT_CONTEXT_TOKENS;
++
++    const queueSettings = resolveQueueSettings({
++      cfg,
++      channel: String(ctx.Surface ?? ctx.Provider ?? "unknown"),
++      sessionEntry: targetEntry,
++    });
++    const queueDepth = targetSessionKey ? getFollowupQueueDepth(targetSessionKey) : 0;
++
+     const statusText = buildStatusMessage({
+       config: cfg,
+       agent: {
++        ...agentDefaults,
+         model: {
+-          primary: cfg.agents?.defaults?.model?.primary ?? "unknown/unknown",
++          ...agentDefaults.model,
++          primary: selectedModel,
+         },
+-        contextTokens: cfg.agents?.defaults?.contextTokens,
++        contextTokens,
+       } as never,
+-      agentId,
+-      sessionKey: ctx.SessionKey,
++      agentId: targetAgentId,
++      sessionEntry: targetEntry,
++      sessionKey: targetSessionKey,
+       resolvedVerbose: "off",
+       resolvedReasoning: "off",
+       queue: {
+-        mode: "collect",
+-        depth: 0,
++        mode: queueSettings.mode ?? "collect",
++        depth: queueDepth,
+       },
+       includeTranscriptUsage: false,
+     });
+-- 
+2.25.1
+
