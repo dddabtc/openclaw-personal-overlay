@@ -24,8 +24,9 @@ jobs:
               owner, repo, state: 'open', per_page: 100
             });
             const hit = issues.find(i => !i.pull_request && (
-              (i.labels || []).some(l => (l.name || '') === 'autofix_issue') ||
-              (i.title || '').startsWith('[autofix_issue]')
+              (i.labels || []).some(l => ['autofix_issue', 'autofix'].includes((l.name || '').toLowerCase())) ||
+              (i.title || '').startsWith('[autofix_issue]') ||
+              (i.title || '').startsWith('[autofix]')
             ));
             if (!hit) {
               core.setOutput('issue', '');
