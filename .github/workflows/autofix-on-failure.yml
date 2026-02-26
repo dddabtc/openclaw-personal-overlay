@@ -8,7 +8,24 @@ name: autofix-on-failure
       - support-release-rollover
     types:
       - completed
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      source_reason:
+        description: "autofix trigger reason"
+        required: false
+        type: string
+      source_workflow:
+        description: "source workflow name"
+        required: false
+        type: string
+      source_run_url:
+        description: "source run url"
+        required: false
+        type: string
+      source_branch:
+        description: "source branch"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -18,7 +35,7 @@ permissions:
 
 jobs:
   dispatch-copilot-fix:
-    if: github.event.workflow_run.conclusion == 'failure'
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'failure'
     runs-on: ubuntu-latest
     steps:
       - name: Gather failed run context
@@ -28,20 +45,33 @@ jobs:
         run: |
           set -euo pipefail
           REPO='${{ github.repository }}'
-          RUN_ID='${{ github.event.workflow_run.id }}'
-          RUN_URL='${{ github.event.workflow_run.html_url }}'
-          WORKFLOW='${{ github.event.workflow_run.name }}'
-          BRANCH='${{ github.event.workflow_run.head_branch }}'
-          DISPLAY_TITLE='${{ github.event.workflow_run.display_title }}'
+
+          if [[ '${{ github.event_name }}' == 'workflow_dispatch' ]]; then
+            RUN_ID='manual-dispatch'
+            RUN_URL='${{ inputs.source_run_url }}'
+            WORKFLOW='${{ inputs.source_workflow }}'
+            BRANCH='${{ inputs.source_branch }}'
+            DISPLAY_TITLE='${{ inputs.source_reason }}'
+            FAILED_JOBS='(triggered by residue/failure)'
+          else
+            RUN_ID='${{ github.event.workflow_run.id }}'
+            RUN_URL='${{ github.event.workflow_run.html_url }}'
+            WORKFLOW='${{ github.event.workflow_run.name }}'
+            BRANCH='${{ github.event.workflow_run.head_branch }}'
+            DISPLAY_TITLE='${{ github.event.workflow_run.display_title }}'
+            FAILED_JOBS=$(gh api repos/$REPO/actions/runs/$RUN_ID/jobs --jq '.jobs[] | select(.conclusion=="failure") | .name' | paste -sd ', ' -)
+            if [[ -z "${FAILED_JOBS:-}" ]]; then
+              FAILED_JOBS="(no failed job name available)"
+            fi
+          fi
+
+          if [[ -z "${WORKFLOW:-}" ]]; then WORKFLOW="unknown-workflow"; fi
+          if [[ -z "${BRANCH:-}" ]]; then BRANCH="main"; fi
+          if [[ -z "${RUN_URL:-}" ]]; then RUN_URL="n/a"; fi
 
           UPSTREAM_VERSION=$(printf '%s\n' "$DISPLAY_TITLE" | sed -nE 's/.*upstream[^0-9]*([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' | head -n1)
           if [[ -z "${UPSTREAM_VERSION:-}" ]]; then
             UPSTREAM_VERSION="n/a"
-          fi
-
-          FAILED_JOBS=$(gh api repos/$REPO/actions/runs/$RUN_ID/jobs --jq '.jobs[] | select(.conclusion=="failure") | .name' | paste -sd ', ' -)
-          if [[ -z "${FAILED_JOBS:-}" ]]; then
-            FAILED_JOBS="(no failed job name available)"
           fi
 
           DEDUPE_KEY="${WORKFLOW}|${BRANCH}|${UPSTREAM_VERSION}"
