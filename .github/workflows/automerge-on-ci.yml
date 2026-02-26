@@ -84,8 +84,27 @@ jobs:
               body
             });
 
-      - name: Merge PR after checks green and policy pass
+      - name: Auto-fix PR conflicts
+        id: conflicts
         if: steps.findpr.outputs.pr != '' && steps.risk.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.OC_GH_TOKEN }}
+          PR_NUMBER: ${{ steps.findpr.outputs.pr }}
+          REPO: ${{ github.repository }}
+          MAX_CONFLICT_FIX_ATTEMPTS: '2'
+          CONFLICT_SYNC_METHOD: merge
+          CONFLICT_RESOLVE_MODE: whitelist
+          CONFLICT_PREFERRED_SIDE: theirs
+          CONFLICT_RESOLVE_WHITELIST: compatibility.json,CHANGELOG.md,.autofix/*,.github/workflows/*
+          COMMENT_ON_CONFLICT_FAILURE: 'true'
+        run: scripts/resolve-pr-conflicts.sh
+
+      - name: Skip merge and wait for next CI after conflict fix push
+        if: steps.findpr.outputs.pr != '' && steps.risk.outcome == 'success' && steps.conflicts.outputs.updated == 'true'
+        run: echo "Conflict fix was pushed. Waiting for next CI workflow_run to merge."
+
+      - name: Merge PR after checks green and policy pass
+        if: steps.findpr.outputs.pr != '' && steps.risk.outcome == 'success' && steps.conflicts.outputs.updated != 'true'
         env:
           GH_TOKEN: ${{ secrets.OC_GH_TOKEN }}
           PR: ${{ steps.findpr.outputs.pr }}
