@@ -12,6 +12,7 @@ permissions:
   contents: write
   pull-requests: write
   actions: write
+  issues: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
@@ -64,11 +65,20 @@ jobs:
 
       - name: Read failure residue state
         id: state
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          residue=$(jq -r '.failed // false' .github/auto-compat-state.json)
-          echo "has_failure_residue=$residue" >> "$GITHUB_OUTPUT"
-          echo "failure residue: $residue"
+          residue_issue=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label auto-compat-failure-residue --limit 1 --json number --jq '.[0].number // empty')
+          if [[ -n "$residue_issue" ]]; then
+            echo "has_failure_residue=true" >> "$GITHUB_OUTPUT"
+            echo "residue_issue=$residue_issue" >> "$GITHUB_OUTPUT"
+            echo "failure residue: true (issue #$residue_issue)"
+          else
+            echo "has_failure_residue=false" >> "$GITHUB_OUTPUT"
+            echo "residue_issue=" >> "$GITHUB_OUTPUT"
+            echo "failure residue: false"
+          fi
 
       - name: Check if already supported in compatibility.json
         id: check
@@ -275,26 +285,24 @@ jobs:
     needs: [discover, validate-and-pr]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
       - name: Mark failure residue state
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          jq --arg ts "$ts" \
-            --arg workflow "$GITHUB_WORKFLOW" \
-            --arg run_id "$GITHUB_RUN_ID" \
-            '.failed=true | .updatedAt=$ts | .source={workflow:$workflow, runId:$run_id}' \
-            .github/auto-compat-state.json > /tmp/state.json
-          mv /tmp/state.json .github/auto-compat-state.json
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/auto-compat-state.json
-          if ! git diff --cached --quiet; then
-            git commit -m "ci(auto-compat): mark failure residue"
-            git push origin HEAD:main
+          REPO="$GITHUB_REPOSITORY"
+          gh api --silent -X POST repos/$REPO/labels -f name='auto-compat-failure-residue' -f color='B60205' -f description='Auto-compat pending failure residue' || true
+          title="[auto-compat residue] pending failure chain"
+          body="Auto-compat failed and requires autofix before hard path can continue.\n\n- run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\n- workflow: ${GITHUB_WORKFLOW}"
+
+          issue=$(gh issue list --repo "$REPO" --state open --label auto-compat-failure-residue --limit 1 --json number --jq '.[0].number // empty')
+          if [[ -n "$issue" ]]; then
+            gh issue comment "$issue" --repo "$REPO" --body "$body"
+          else
+            new_url=$(gh issue create --repo "$REPO" --title "$title" --body "$body" --label auto-compat-failure-residue)
+            issue=$(basename "$new_url")
           fi
+          echo "residue issue #$issue"
 
   trigger-autofix:
     if: github.event_name != 'pull_request' && (needs.discover.outputs.has_failure_residue == 'true' || needs.mark-failure-residue.result == 'success')
@@ -317,25 +325,22 @@ jobs:
             -f source_branch="main"
 
   clear-failure-residue:
-    if: github.event_name != 'pull_request' && success() && needs.discover.outputs.already_supported != 'true' && needs.discover.outputs.has_failure_residue != 'true'
+    if: github.event_name != 'pull_request' && success() && needs.discover.outputs.already_supported != 'true'
     needs: [discover, validate-and-pr]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
       - name: Clear failure residue state
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          jq --arg ts "$ts" '.failed=false | .updatedAt=$ts | .source={}' .github/auto-compat-state.json > /tmp/state.json
-          mv /tmp/state.json .github/auto-compat-state.json
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/auto-compat-state.json
-          if ! git diff --cached --quiet; then
-            git commit -m "ci(auto-compat): clear failure residue"
-            git push origin HEAD:main
+          REPO="$GITHUB_REPOSITORY"
+          issue=$(gh issue list --repo "$REPO" --state open --label auto-compat-failure-residue --limit 1 --json number --jq '.[0].number // empty')
+          if [[ -n "$issue" ]]; then
+            gh issue comment "$issue" --repo "$REPO" --body "Auto-compat success observed; closing failure residue.\n\n- run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            gh issue close "$issue" --repo "$REPO"
+          else
+            echo "No residue issue to close"
           fi
 
   pr-verify:
