@@ -305,7 +305,7 @@ jobs:
           echo "residue issue #$issue"
 
   trigger-autofix:
-    if: github.event_name != 'pull_request' && (needs.discover.outputs.has_failure_residue == 'true' || needs.mark-failure-residue.result == 'success')
+    if: always() && github.event_name != 'pull_request' && (needs.discover.outputs.has_failure_residue == 'true' || needs.mark-failure-residue.result == 'success')
     needs: [discover, mark-failure-residue]
     runs-on: ubuntu-latest
     steps:
