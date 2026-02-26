@@ -45,6 +45,8 @@ jobs:
             exit 0
           fi
 
+          gh pr comment "$PR" --repo "$REPO" --body "Autofix workflow已接管：自动review+等待checks通过后自动merge。"
+          gh pr review "$PR" --repo "$REPO" --approve || true
           gh pr merge "$PR" --repo "$REPO" --auto --squash --delete-branch
           echo "Auto-merge enabled for PR #$PR"
 

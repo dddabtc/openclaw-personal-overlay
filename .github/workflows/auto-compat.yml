@@ -4,9 +4,6 @@ name: auto-compat
   workflow_dispatch: {}
   schedule:
     - cron: '30 */6 * * *'
-  push:
-    paths:
-      - '.github/workflows/auto-compat.yml'
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
@@ -14,6 +11,7 @@ name: auto-compat
 permissions:
   contents: write
   pull-requests: write
+  actions: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
@@ -27,6 +25,7 @@ jobs:
       latest_tag: ${{ steps.discover.outputs.latest_tag }}
       latest_sha: ${{ steps.discover.outputs.latest_sha }}
       already_supported: ${{ steps.check.outputs.already_supported }}
+      has_failure_residue: ${{ steps.state.outputs.has_failure_residue }}
     steps:
       - uses: actions/checkout@v4
 
@@ -34,9 +33,6 @@ jobs:
         id: discover
         run: |
           set -euo pipefail
-
-          # Use npm latest as canonical runtime version (e.g. 2026.2.21-2),
-          # and map it to a git commit via npm gitHead when available.
           NPM_META=$(curl -fsSL https://registry.npmjs.org/openclaw/latest)
           NPM_VERSION=$(echo "$NPM_META" | jq -r '.version // empty')
           NPM_GIT_HEAD=$(echo "$NPM_META" | jq -r '.gitHead // empty')
@@ -65,8 +61,14 @@ jobs:
 
           echo "latest_tag=v${NPM_VERSION}" >> "$GITHUB_OUTPUT"
           echo "latest_sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
-          echo "Discovered npm latest v${NPM_VERSION} @ $SHA (release tag: $RELEASE_TAG)"
+
+      - name: Read failure residue state
+        id: state
+        run: |
+          set -euo pipefail
+          residue=$(jq -r '.failed // false' .github/auto-compat-state.json)
+          echo "has_failure_residue=$residue" >> "$GITHUB_OUTPUT"
+          echo "failure residue: $residue"
 
       - name: Check if already supported in compatibility.json
         id: check
@@ -85,7 +87,7 @@ jobs:
   validate-and-pr:
     runs-on: ubuntu-latest
     needs: discover
-    if: github.event_name != 'pull_request' && needs.discover.outputs.already_supported != 'true'
+    if: github.event_name != 'pull_request' && needs.discover.outputs.already_supported != 'true' && needs.discover.outputs.has_failure_residue != 'true'
     env:
       UPSTREAM_TAG: ${{ needs.discover.outputs.latest_tag }}
       UPSTREAM_SHA: ${{ needs.discover.outputs.latest_sha }}
@@ -174,35 +176,28 @@ jobs:
           git -C ./work config user.name "github-actions[bot]"
           git -C ./work config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Apply overlay patch set (candidate)
-        id: apply_patch
-        continue-on-error: true
+      - name: Apply overlay patch set (hard fail)
         run: |
           set -euo pipefail
           OVERLAY_CI_ONLY_APPLY=1 ./scripts/apply-personal-patch.sh ./work
 
       - name: Install dependencies for upstream workspace
-        if: steps.apply_patch.outcome == 'success'
         run: |
           cd work
           pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Run overlay build smoke (required)
-        if: steps.apply_patch.outcome == 'success'
-        id: smoke
         run: |
           cd work
           pnpm -s build
 
       - name: Build dist overlay artifact
-        if: steps.apply_patch.outcome == 'success'
         run: |
           scripts/build-dist-overlay.sh ./work dist-overlay
           mkdir -p out
           mv dist-overlay dist-overlay.tar.gz dist-overlay.tar.gz.sha256 out/
 
       - name: Fill overlayHeadCommit in compatibility.json
-        if: steps.apply_patch.outcome == 'success'
         run: |
           set -euo pipefail
           head_sha=$(git -C work rev-parse HEAD)
@@ -212,28 +207,42 @@ jobs:
           jq --arg version "$version" --arg sha "$sha" --arg head "$head_sha" '(.supported // []) |= map(if .openclawVersion == $version and .commitSha == $sha then .overlayHeadCommit = $head else . end)' compatibility.json > "$tmp"
           mv "$tmp" compatibility.json
 
+      - name: Update changelog for new support version
+        run: |
+          set -euo pipefail
+          version="${UPSTREAM_VERSION#v}"
+          today=$(date -u +%Y-%m-%d)
+          tmp=$(mktemp)
+          {
+            sed -n '1,6p' CHANGELOG.md
+            echo "## [overlay-v${version}] — ${today}"
+            echo
+            echo "### CI/CD"
+            echo "- \`ci(auto-compat)\`: auto-compat validated and added support for v${version}"
+            echo
+            echo "### Chores"
+            echo "- \`chore(compat)\`: add candidate support for v${version}"
+            echo
+            echo "---"
+            echo
+            sed -n '7,9999p' CHANGELOG.md
+          } > "$tmp"
+          mv "$tmp" CHANGELOG.md
+
       - name: Upload candidate artifacts
-        if: steps.apply_patch.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: auto-compat-artifacts-${{ env.UPSTREAM_VERSION }}
           path: out/*
 
       - name: Cleanup workspace before PR commit
-        run: |
-          rm -rf work out
-
-      - name: Skip incompatible candidate patchset without failing workflow
-        if: steps.apply_patch.outcome != 'success'
-        run: |
-          echo "::warning::auto-compat skipped for ${UPSTREAM_VERSION}: candidate patchset ${AUTO_PATCHSET_DIR} did not apply cleanly to ${UPSTREAM_SHA}."
+        run: rm -rf work out
 
       - name: Create pull request for new compatibility support
-        if: steps.apply_patch.outcome == 'success'
         id: cpr
         uses: peter-evans/create-pull-request@v7
         with:
-          commit-message: "chore(compat): add candidate support for ${{ env.UPSTREAM_VERSION }}"
+          commit-message: "chore(compat): add support candidate for ${{ env.UPSTREAM_VERSION }}"
           branch: "auto/compat-${{ env.UPSTREAM_VERSION }}"
           delete-branch: true
           title: "chore(compat): add support candidate for ${{ env.UPSTREAM_VERSION }}"
@@ -243,27 +252,92 @@ jobs:
             - Upstream version: `${{ env.UPSTREAM_VERSION }}`
             - Upstream commit: `${{ env.UPSTREAM_SHA }}`
             - Patch set dir: `${{ env.AUTO_PATCHSET_DIR }}`
-            - Smoke result: `${{ steps.smoke.outcome }}`
-
-            Notes:
-            - Patch apply + build + smoke are all required (all-green policy).
-            - PR will be auto-merged when checks are green.
+            - Hard policy: no skip; any failed step fails workflow.
           add-paths: |
             compatibility.json
+            CHANGELOG.md
             patches/**
           labels: |
             automation
             compatibility
 
-      - name: Enable auto-merge for compatibility PR (best-effort)
-        if: steps.apply_patch.outcome == 'success' && steps.cpr.outputs.pull-request-number != '' && steps.smoke.outcome == 'success'
-        continue-on-error: true
+      - name: Enable auto-merge for compatibility PR
+        if: steps.cpr.outputs.pull-request-number != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           pr='${{ steps.cpr.outputs.pull-request-number }}'
           gh pr merge "$pr" --repo "$GITHUB_REPOSITORY" --auto --squash --delete-branch
+
+  mark-failure-residue:
+    if: github.event_name != 'pull_request' && failure() && needs.discover.outputs.already_supported != 'true'
+    needs: [discover, validate-and-pr]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mark failure residue state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          jq --arg ts "$ts" \
+            --arg workflow "$GITHUB_WORKFLOW" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            '.failed=true | .updatedAt=$ts | .source={workflow:$workflow, runId:$run_id}' \
+            .github/auto-compat-state.json > /tmp/state.json
+          mv /tmp/state.json .github/auto-compat-state.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/auto-compat-state.json
+          if ! git diff --cached --quiet; then
+            git commit -m "ci(auto-compat): mark failure residue"
+            git push origin HEAD:main
+          fi
+
+  trigger-autofix:
+    if: github.event_name != 'pull_request' && (needs.discover.outputs.has_failure_residue == 'true' || needs.mark-failure-residue.result == 'success')
+    needs: [discover, mark-failure-residue]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger autofix workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          reason="previous-failure-residue"
+          if [[ "${{ needs.mark-failure-residue.result }}" == "success" ]]; then
+            reason="current-run-failure"
+          fi
+          gh workflow run autofix-on-failure.yml --repo "$GITHUB_REPOSITORY" \
+            -f source_reason="$reason" \
+            -f source_workflow="auto-compat" \
+            -f source_run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            -f source_branch="main"
+
+  clear-failure-residue:
+    if: github.event_name != 'pull_request' && success() && needs.discover.outputs.already_supported != 'true' && needs.discover.outputs.has_failure_residue != 'true'
+    needs: [discover, validate-and-pr]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clear failure residue state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          jq --arg ts "$ts" '.failed=false | .updatedAt=$ts | .source={}' .github/auto-compat-state.json > /tmp/state.json
+          mv /tmp/state.json .github/auto-compat-state.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/auto-compat-state.json
+          if ! git diff --cached --quiet; then
+            git commit -m "ci(auto-compat): clear failure residue"
+            git push origin HEAD:main
+          fi
+
   pr-verify:
     if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'auto/compat-')
     runs-on: ubuntu-latest
