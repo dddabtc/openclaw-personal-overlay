@@ -17,6 +17,21 @@
   "supported": [
     {
       "id": "oc-2026.2.25-e7b600e31882",
+      "openclawVersion": "2026.2.26",
+      "commitSha": "bc507080577c620243617e8fadd294bec3efa252",
+      "upstreamBaseCommit": "e7b600e31882a9d61271833b57b19f631362fc32",
+      "overlayHeadCommit": "95fa0119b",
+      "patchSetDir": "patches/e7b600e31882-autocompat",
+      "binaryArtifact": "dist-overlay.tar.gz",
+      "atlasCompat": {
+        "memory_search": "expected",
+        "memory_get": "expected"
+      },
+      "notes": "Rebased patchset for 2026.2.25 - all 16 patches applied with conflict resolution",
+      "status": "supported"
+    },
+    {
+      "id": "oc-2026.2.25-e7b600e31882",
       "openclawVersion": "2026.2.25",
       "commitSha": "e7b600e31882a9d61271833b57b19f631362fc32",
       "upstreamBaseCommit": "e7b600e31882a9d61271833b57b19f631362fc32",
