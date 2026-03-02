@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### 2026-03-01
+
+#### Features
+- `feat(apply)`: `bin/openclaw-personal apply` now automatically enables `sessionPolicies.main.forbidLongExec: true` in OpenClaw config after successful patch apply
+- Ensures main session exec is guarded (timeout ≤30s, long tasks forced to sub-agents)
+- Idempotent behavior — skips write if config is already correct
+- New `--no-config` flag to skip config patching
+
 ### Bug Fixes
 - `fix(release)`: build and upload `dist-overlay.tar.gz` and `dist-overlay.tar.gz.sha256` when creating GitHub releases
 
