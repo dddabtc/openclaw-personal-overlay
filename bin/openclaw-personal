@@ -246,80 +246,6 @@ print(d$field)
 PY
 }
 
-ensure_exec_policy_config() {
-  local cfg="${OPENCLAW_CONFIG:-${OPENCLAW_CONFIG_PATH:-$HOME/.openclaw/openclaw.json}}"
-  local cfg_dir
-  cfg_dir="$(dirname "$cfg")"
-  mkdir -p "$cfg_dir"
-
-  local result
-  result="$(python3 - "$cfg" <<'PY'
-import json, pathlib, sys
-
-cfg_path = pathlib.Path(sys.argv[1])
-changes = []
-
-if cfg_path.exists():
-    try:
-        data = json.loads(cfg_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        print(f"error:invalid_json:{exc}")
-        raise SystemExit(2)
-    if not isinstance(data, dict):
-        print("error:top_level_not_object")
-        raise SystemExit(2)
-else:
-    data = {}
-    changes.append("created config file")
-
-session_policies = data.get("sessionPolicies")
-if not isinstance(session_policies, dict):
-    session_policies = {}
-    data["sessionPolicies"] = session_policies
-    changes.append("sessionPolicies={}")
-
-main = session_policies.get("main")
-if not isinstance(main, dict):
-    main = {}
-    session_policies["main"] = main
-    changes.append("sessionPolicies.main={}")
-
-def set_if_needed(key, value):
-    if main.get(key) != value:
-        main[key] = value
-        changes.append(f"sessionPolicies.main.{key}={value!r}")
-
-set_if_needed("forbidLongExec", True)
-set_if_needed("maxExecTimeoutSec", 30)
-set_if_needed("requireBackgroundForExec", False)
-
-if not changes:
-    print("unchanged")
-    raise SystemExit(0)
-
-cfg_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-print("updated|" + "|".join(changes))
-PY
-)" || {
-    err "failed to update OpenClaw config: $cfg"
-    return 1
-  }
-
-  if [[ "$result" == "unchanged" ]]; then
-    log "OpenClaw config already has required sessionPolicies.main exec settings ($cfg)"
-  elif [[ "$result" == updated* ]]; then
-    log "updated OpenClaw config: $cfg"
-    IFS='|' read -r -a parts <<< "$result"
-    local i
-    for ((i=1; i<${#parts[@]}; i++)); do
-      log "  - ${parts[$i]}"
-    done
-  else
-    err "unexpected config update result for $cfg: $result"
-    return 1
-  fi
-}
-
 regular_apply() {
   local artifact="${1:-}"
   local release_repo="${2:-$DEFAULT_RELEASE_REPO}"
@@ -601,9 +527,7 @@ case "$cmd" in
       regular_apply "$artifact" "$release_repo"
     fi
     if [[ "$no_config" == "1" ]]; then
-      log "skipping OpenClaw config update (--no-config)"
-    else
-      ensure_exec_policy_config
+      log "--no-config is deprecated; no OpenClaw config mutation is performed"
     fi
     ;;
   rollback)
