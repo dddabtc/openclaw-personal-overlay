@@ -1,5 +1,7 @@
 # openclaw-personal-overlay
 
+**TL;DR** 这是原版 OpenClaw 之上的个人 Overlay：用于在跟进上游升级时保留本地行为补丁，并通过 `openclawVersion + commitSha` 门禁只允许兼容版本 apply；不兼容即 fail-safe 退出，回滚路径统一。
+
 [![overlay-ci](https://github.com/dddabtc/openclaw-personal-overlay/actions/workflows/overlay-ci.yml/badge.svg)](https://github.com/dddabtc/openclaw-personal-overlay/actions/workflows/overlay-ci.yml)
 [![Release](https://img.shields.io/github/v/release/dddabtc/openclaw-personal-overlay)](https://github.com/dddabtc/openclaw-personal-overlay/releases)
 

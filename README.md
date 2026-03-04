@@ -1,5 +1,7 @@
 # openclaw-personal-overlay
 
+**TL;DR** 这是一个叠加在原版 OpenClaw 之上的“个人补丁层”：升级上游时保留本地定制，且只在版本/提交匹配时允许 apply；不匹配就 fail-safe 退出，回滚路径也统一。
+
 [![overlay-ci](https://github.com/dddabtc/openclaw-personal-overlay/actions/workflows/overlay-ci.yml/badge.svg)](https://github.com/dddabtc/openclaw-personal-overlay/actions/workflows/overlay-ci.yml)
 [![Release](https://img.shields.io/github/v/release/dddabtc/openclaw-personal-overlay)](https://github.com/dddabtc/openclaw-personal-overlay/releases)
 
