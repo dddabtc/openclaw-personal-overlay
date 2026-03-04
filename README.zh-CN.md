@@ -15,6 +15,22 @@ OpenClaw 个人 Overlay 补丁层。
 - 安全应用个人补丁
 - 支持快速回滚
 
+## 为什么这个场景下不直接用原版 OpenClaw？
+
+该场景常见痛点：
+- 上游升级后，本地定制容易丢失
+- 缺少严格门禁，补丁可能误打到不兼容版本
+- 回滚路径不统一，出错成本高
+- 发布/同步流程容易随时间漂移
+- 自动化失败不一定能被及时看见
+
+本 overlay 的解决方式：
+- 将本地行为固化为可版本化 patchset，独立于上游
+- 用 `openclawVersion + commitSha` 做硬性兼容校验
+- 统一 `status / apply / rollback` 标准流程
+- 通过 CI 与 support 工作流固化发布/同步步骤
+- 用 CI 门禁 + 非 0 fail-safe 退出提升失败可见性
+
 ## 核心能力
 
 - 基于 `openclawVersion + commitSha` 的兼容门禁

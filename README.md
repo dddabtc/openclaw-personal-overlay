@@ -15,6 +15,22 @@ This repo keeps personal behavior patches on top of upstream OpenClaw without ma
 - Applies personal patches safely
 - Supports quick rollback
 
+## Why not vanilla OpenClaw for this use case?
+
+Pain points in this scenario:
+- Local customizations can be lost after upstream upgrades
+- No strict gate to block incompatible patch application
+- Rollback paths are ad-hoc and easy to get wrong
+- Release/sync steps can drift over time
+- Automation failures are not always visible early
+
+How this overlay addresses them:
+- Keeps custom behavior as versioned patchsets outside upstream
+- Enforces `openclawVersion + commitSha` compatibility checks
+- Standardizes `status / apply / rollback` as one safe path
+- Pins release/sync flow in CI + support workflows
+- Surfaces failures via CI gates and non-zero fail-safe exits
+
 ## Key features
 
 - Compatibility gate by `openclawVersion + commitSha`
