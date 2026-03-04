@@ -24,25 +24,28 @@ OpenClaw 的个人 Overlay 补丁层：
 
 ---
 
-## 近期关键更新（README 补齐）
+## 近期关键更新（与最新提交同步）
 
-1. **auto-compat 失败策略调整**（`81aee88`）
-   - 候选 patchset 无法干净应用时，workflow 改为 warning + skip
-   - 不再把整条自动兼容流程直接标红失败
+1. **`overlay-v2026.3.2` 能力补齐**（`6792dbc` + 后续修复）
+   - README/CHANGELOG 同步了 `maxOutputBytes` 策略、发布资产硬门禁、构建与发布链路修复
+   - 对应版本标签与 release 资产发布已纳入当前自动化流程
 
-2. **support release 资产治理修正**（`36a33df`, `a9d5678`）
-   - 支持发布强制上传最新版 `compatibility.json`
-   - 清理过时 `compatibility-candidate.json` 资产
+2. **apply 下载与版本匹配更稳**（`7f61ebb`, `04f419c`）
+   - 增加非 `gh` 场景下载 fallback
+   - 强化目标版本覆盖与 metadata 处理，避免参数过长导致 apply 失败
 
-3. **`/status` 控制面严格匹配修复回补**（`8e68ee6`）
-   - 修复 strict match / fast-path guard 相关回归
+3. **配置补丁与默认策略收敛**（`987320a`, `e129e52`, `018a0c4`, `573b2c4`, `28706df`）
+   - 去除上游不再支持的 `sessionPolicies` 注入
+   - apply/rollback 期间显式设置并恢复 `agents.defaults.timeoutSeconds`
+   - 默认主会话策略改为 `forbidLongExec` 并修复对应补丁编译/分片问题
 
-4. **CLI 安装根目录解析更稳**（`4bdd3a7`）
-   - 优先从 `which openclaw` 解析实际安装路径
-   - 多安装时给出告警，可用 `OPENCLAW_INSTALL_ROOT` 覆盖
+4. **主会话执行保护扩大到全部非子会话**（`e2ad30b`）
+   - `exec` 保护不再只限 `agent:*:main`，统一覆盖所有非 subagent 会话
+   - 与“默认工具调用走子会话”的策略保持一致，减少长任务误占主会话风险
 
-5. **项目治理文件补齐**（`c6aa1d1`）
-   - 增加 `CHANGELOG.md`、Issue/PR 模板等
+5. **文档与中文快速使用段落持续更新**（`c8d198f`, `d70212c`）
+   - README 已按当前工作流状态补齐并简化中文 Quickstart
+   - 保持仓库说明与实际 CI/CD 行为一致
 
 ---
 
