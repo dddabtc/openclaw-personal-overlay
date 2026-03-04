@@ -30,6 +30,7 @@ The current patch set focuses on stability and responsiveness:
 | **Output cap** | Limits main-session output bytes to prevent runaway output |
 | **Control fast-path** | Routes `/stop` and `/status` through a dedicated control lane so they never get stuck behind a hung session |
 | **Abortable retry** | Makes transient retry delays interruptible |
+| **Sub-agent timeout** | Extends default sub-agent session timeout to 6 hours (upstream default is too short for complex tasks) |
 
 ## Quick start
 
