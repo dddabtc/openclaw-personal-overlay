@@ -1,6 +1,6 @@
-From 4be3aff9f918c54c8b7ef8d7b1c8af6bb0eecef8 Mon Sep 17 00:00:00 2001
+From ad9cc1c43daa0ed99f05e9e7fa4ed70417e2de8f Mon Sep 17 00:00:00 2001
 From: zhaod <zhaod@local>
-Date: Tue, 3 Mar 2026 22:15:39 -0400
+Date: Tue, 3 Mar 2026 22:18:18 -0400
 Subject: [PATCH] fix(config): remove sessionPolicies from config schema,
  hardcode defaults
 
@@ -18,8 +18,8 @@ rather than user-configurable.
  src/agents/pi-tools.ts       | 12 ++++++++++--
  src/config/schema.ts         | 15 ---------------
  src/config/types.openclaw.ts | 11 -----------
- src/config/zod-schema.ts     |  5 -----
- 4 files changed, 10 insertions(+), 33 deletions(-)
+ src/config/zod-schema.ts     | 20 --------------------
+ 4 files changed, 10 insertions(+), 48 deletions(-)
 
 diff --git a/src/agents/pi-tools.ts b/src/agents/pi-tools.ts
 index 9d1110013..cbe6546e9 100644
@@ -100,10 +100,10 @@ index 225637b54..f6e94c45f 100644
  
  export type ConfigValidationIssue = {
 diff --git a/src/config/zod-schema.ts b/src/config/zod-schema.ts
-index ca344d0b3..c49f419d6 100644
+index ca344d0b3..30e8c2e80 100644
 --- a/src/config/zod-schema.ts
 +++ b/src/config/zod-schema.ts
-@@ -363,11 +363,6 @@ export const OpenClawSchema = z
+@@ -363,26 +363,6 @@ export const OpenClawSchema = z
      commands: CommandsSchema,
      approvals: ApprovalsSchema,
      session: SessionSchema,
@@ -112,9 +112,24 @@ index ca344d0b3..c49f419d6 100644
 -        main: z
 -          .object({
 -            forbidLongExec: z.boolean().optional(),
-             requireBackgroundForExec: z.boolean().optional(),
-             maxExecTimeoutSec: z.number().int().positive().optional(),
-             maxOutputBytes: z.number().int().nonnegative().optional(),
+-            requireBackgroundForExec: z.boolean().optional(),
+-            maxExecTimeoutSec: z.number().int().positive().optional(),
+-            maxOutputBytes: z.number().int().nonnegative().optional(),
+-          })
+-          .strict()
+-          .optional(),
+-        subagent: z
+-          .object({
+-            maxOutputBytes: z.number().int().nonnegative().optional(),
+-          })
+-          .strict()
+-          .optional(),
+-      })
+-      .strict()
+-      .optional(),
+     cron: z
+       .object({
+         enabled: z.boolean().optional(),
 -- 
 2.25.1
 
