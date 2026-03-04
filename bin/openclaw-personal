@@ -212,6 +212,29 @@ for a in obj.get("assets",[]):
         break'
 }
 
+release_artifact_for_tag() {
+  local repo="$1"
+  local tag="$2"
+
+  ensure_state_dir
+  local out="$STATE_DIR/tmp-artifact-${tag}-$(date +%s).tar.gz"
+
+  if command -v gh >/dev/null 2>&1; then
+    gh release download "$tag" \
+      --repo "$repo" \
+      --pattern "dist-overlay.tar.gz" \
+      --output "$out" >/dev/null
+    echo "$out"
+    return 0
+  fi
+
+  local version="${tag#overlay-v}"
+  local url="https://github.com/${repo}/releases/download/overlay-v${version}/dist-overlay.tar.gz"
+  echo "[openclaw-personal] gh not found; downloading artifact via curl: $url" >&2
+  curl -fsSL "$url" -o "$out"
+  echo "$out"
+}
+
 parse_json_field() {
   local file="$1"
   local field="$2"
@@ -328,7 +351,13 @@ regular_apply() {
 
   if [[ -z "$artifact" ]]; then
     local version_tag="overlay-v${version}"
-    artifact="$(release_artifact_url_for_tag "$release_repo" "$version_tag" 2>/dev/null || true)"
+    artifact="$(release_artifact_for_tag "$release_repo" "$version_tag" 2>/dev/null || true)"
+
+    if [[ -z "$artifact" ]]; then
+      # Fallback for environments where direct release asset URL lookup works
+      # but download step above fails.
+      artifact="$(release_artifact_url_for_tag "$release_repo" "$version_tag" 2>/dev/null || true)"
+    fi
 
     if [[ -n "$artifact" ]]; then
       log "resolved version-matched artifact from release tag: ${version_tag}"
