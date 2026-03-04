@@ -246,9 +246,122 @@ print(d$field)
 PY
 }
 
+resolve_openclaw_config_path() {
+  if [[ -n "${OPENCLAW_CONFIG_PATH:-}" ]]; then
+    echo "$OPENCLAW_CONFIG_PATH"
+    return 0
+  fi
+  local state_dir="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
+  echo "$state_dir/openclaw.json"
+}
+
+apply_overlay_config_timeout() {
+  local config_path="$1"
+  python3 - "$config_path" <<'PY'
+import json, pathlib, sys
+
+config_path = pathlib.Path(sys.argv[1]).expanduser()
+meta = {
+    "path": str(config_path),
+    "existed": config_path.exists(),
+    "hadTimeout": False,
+    "previousTimeout": None,
+}
+
+cfg = {}
+if config_path.exists():
+    try:
+        cfg = json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception:
+        cfg = {}
+
+if not isinstance(cfg, dict):
+    cfg = {}
+
+agents = cfg.get("agents")
+if not isinstance(agents, dict):
+    agents = {}
+    cfg["agents"] = agents
+
+defaults = agents.get("defaults")
+if not isinstance(defaults, dict):
+    defaults = {}
+    agents["defaults"] = defaults
+
+if "timeoutSeconds" in defaults:
+    meta["hadTimeout"] = True
+    meta["previousTimeout"] = defaults.get("timeoutSeconds")
+
+defaults["timeoutSeconds"] = 21600
+
+config_path.parent.mkdir(parents=True, exist_ok=True)
+config_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+print(json.dumps(meta, ensure_ascii=False))
+PY
+}
+
+rollback_overlay_config_timeout() {
+  local state_file="$1"
+  python3 - "$state_file" <<'PY'
+import json, pathlib, sys
+
+state = json.load(open(sys.argv[1], "r", encoding="utf-8"))
+meta = state.get("configMutation")
+if not isinstance(meta, dict):
+    raise SystemExit(0)
+
+raw_path = meta.get("path")
+if not isinstance(raw_path, str) or not raw_path.strip():
+    raise SystemExit(0)
+
+config_path = pathlib.Path(raw_path).expanduser()
+
+if config_path.exists():
+    try:
+        cfg = json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception:
+        cfg = {}
+else:
+    cfg = {}
+
+if not isinstance(cfg, dict):
+    cfg = {}
+
+agents = cfg.get("agents")
+if not isinstance(agents, dict):
+    agents = {}
+    cfg["agents"] = agents
+
+defaults = agents.get("defaults")
+if not isinstance(defaults, dict):
+    defaults = {}
+    agents["defaults"] = defaults
+
+if meta.get("hadTimeout"):
+    defaults["timeoutSeconds"] = meta.get("previousTimeout")
+else:
+    defaults.pop("timeoutSeconds", None)
+    if not defaults:
+        agents.pop("defaults", None)
+    if not agents:
+        cfg.pop("agents", None)
+
+if meta.get("existed"):
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+else:
+    if cfg:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    elif config_path.exists():
+        config_path.unlink()
+PY
+}
+
 regular_apply() {
   local artifact="${1:-}"
   local release_repo="${2:-$DEFAULT_RELEASE_REPO}"
+  local mutate_config="${3:-1}"
 
   local install_root
   install_root="$(resolve_openclaw_install_root)" || {
@@ -378,6 +491,14 @@ regular_apply() {
 
   payload_files_json="$(python3 -c 'import json,sys; print(json.dumps([line.strip() for line in sys.argv[1].splitlines() if line.strip()]))' "$payload_files")"
 
+  local config_mutation_json="null"
+  if [[ "$mutate_config" == "1" ]]; then
+    local config_path
+    config_path="$(resolve_openclaw_config_path)"
+    config_mutation_json="$(apply_overlay_config_timeout "$config_path")"
+    log "set agents.defaults.timeoutSeconds=21600 in $config_path"
+  fi
+
   cat > "$INSTALL_STATE_FILE" <<JSON
 {
   "installedAt": "$ts",
@@ -386,7 +507,8 @@ regular_apply() {
   "commitSha": "${commit}",
   "overlayVersion": "${overlay_version}",
   "backupDir": "${backup_dir}",
-  "payloadFiles": ${payload_files_json}
+  "payloadFiles": ${payload_files_json},
+  "configMutation": ${config_mutation_json}
 }
 JSON
 
@@ -490,6 +612,7 @@ for rel in state.get('payloadFiles', []):
 PY
 
   rsync -a "$backup_dir/" "$install_root/"
+  rollback_overlay_config_timeout "$INSTALL_STATE_FILE"
   rm -f "$INSTALL_STATE_FILE"
   log "rollback completed from backup: $backup_dir"
 }
@@ -524,10 +647,12 @@ case "$cmd" in
     if [[ -n "$src" ]]; then
       "$ROOT_DIR/scripts/apply-personal-patch.sh" "$(repo_path "$src")"
     else
-      regular_apply "$artifact" "$release_repo"
-    fi
-    if [[ "$no_config" == "1" ]]; then
-      log "--no-config is deprecated; no OpenClaw config mutation is performed"
+      if [[ "$no_config" == "1" ]]; then
+        log "skipping OpenClaw config mutation (--no-config)"
+        regular_apply "$artifact" "$release_repo" "0"
+      else
+        regular_apply "$artifact" "$release_repo" "1"
+      fi
     fi
     ;;
   rollback)
