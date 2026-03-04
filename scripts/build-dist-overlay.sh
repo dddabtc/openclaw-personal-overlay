@@ -27,43 +27,12 @@ fi
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR/payload"
 
-# Build payload from diff-only dist files when baseline is available.
-if [[ -n "$BASELINE_DIR" && -d "$BASELINE_DIR/dist" ]]; then
-  mkdir -p "$OUT_DIR/payload/dist"
-  python3 - "$BASELINE_DIR/dist" "$WORK_DIR/dist" "$OUT_DIR/payload/dist" <<'PY'
-import hashlib, pathlib, shutil, sys
-
-base = pathlib.Path(sys.argv[1])
-patched = pathlib.Path(sys.argv[2])
-out = pathlib.Path(sys.argv[3])
-
-
-def digest(path: pathlib.Path) -> str:
-    h = hashlib.sha256()
-    with path.open('rb') as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b''):
-            h.update(chunk)
-    return h.hexdigest()
-
-count = 0
-for p in patched.rglob('*'):
-    if not p.is_file():
-        continue
-    rel = p.relative_to(patched)
-    b = base / rel
-    changed = (not b.exists()) or (digest(p) != digest(b))
-    if changed:
-        dest = out / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(p, dest)
-        count += 1
-
-print(count)
-PY
-else
-  mkdir -p "$OUT_DIR/payload/dist"
-  rsync -a "$WORK_DIR/dist/" "$OUT_DIR/payload/dist/"
-fi
+# Always include the full rebuilt dist payload.
+# Rationale: root entry files (entry.js/index.js/openclaw.mjs) can keep the same
+# filename while their import graph changes to new hashed chunks. Sending only a
+# diff subset can miss these content updates and break runtime imports.
+mkdir -p "$OUT_DIR/payload/dist"
+rsync -a "$WORK_DIR/dist/" "$OUT_DIR/payload/dist/"
 
 if [[ "$INCLUDE_PACKAGE_JSON" == "1" && -f "$WORK_DIR/package.json" ]]; then
   cp "$WORK_DIR/package.json" "$OUT_DIR/payload/package.json"
