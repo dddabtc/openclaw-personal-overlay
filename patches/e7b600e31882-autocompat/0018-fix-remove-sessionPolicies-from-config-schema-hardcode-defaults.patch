@@ -25,7 +25,7 @@ diff --git a/src/agents/pi-tools.ts b/src/agents/pi-tools.ts
 index 9d1110013..cbe6546e9 100644
 --- a/src/agents/pi-tools.ts
 +++ b/src/agents/pi-tools.ts
-@@ -146,8 +146,16 @@ function resolveExecConfig(params: { cfg?: OpenClawConfig; agentId?: string }) {
+@@ -146,8 +146,11 @@ function resolveExecConfig(params: { cfg?: OpenClawConfig; agentId?: string }) {
      notifyOnExitEmptySuccess:
        agentExec?.notifyOnExitEmptySuccess ?? globalExec?.notifyOnExitEmptySuccess,
      applyPatch: agentExec?.applyPatch ?? globalExec?.applyPatch,
