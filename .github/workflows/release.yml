@@ -24,6 +24,11 @@ on:
         required: false
         type: string
         default: manual
+  push:
+    tags:
+      - 'overlay-v*'
+  release:
+    types: [published]
 
 permissions:
   contents: write
@@ -50,13 +55,53 @@ jobs:
       - name: Normalize release tag
         id: normalize
         env:
-          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
-          UPSTREAM_TAG: ${{ inputs.upstream_tag }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag || '' }}
+          INPUT_UPSTREAM_TAG: ${{ inputs.upstream_tag || '' }}
+          INPUT_SOURCE_RUN_URL: ${{ inputs.source_run_url || '' }}
+          EVENT_RELEASE_TAG: ${{ github.event.release.tag_name || '' }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
         run: |
-          upstream_version="${UPSTREAM_TAG#v}"
-          release_tag="overlay-v${upstream_version}"
+          set -euo pipefail
+
+          release_tag=""
+          upstream_version=""
+
+          if [ -n "$INPUT_UPSTREAM_TAG" ]; then
+            upstream_version="${INPUT_UPSTREAM_TAG#v}"
+            release_tag="overlay-v${upstream_version}"
+          elif [ -n "$INPUT_RELEASE_TAG" ]; then
+            release_tag="$INPUT_RELEASE_TAG"
+            upstream_version="${release_tag#overlay-v}"
+          elif [ "$EVENT_NAME" = "release" ] && [ -n "$EVENT_RELEASE_TAG" ]; then
+            release_tag="$EVENT_RELEASE_TAG"
+            upstream_version="${release_tag#overlay-v}"
+          else
+            release_tag="$REF_NAME"
+            upstream_version="${release_tag#overlay-v}"
+          fi
+
+          if [[ "$release_tag" != overlay-v* ]]; then
+            echo "Unexpected release tag format: $release_tag" >&2
+            exit 1
+          fi
+
+          if [ -z "$upstream_version" ] || [ "$upstream_version" = "$release_tag" ]; then
+            echo "Failed to derive upstream version from tag: $release_tag" >&2
+            exit 1
+          fi
+
+          source_run_url="$INPUT_SOURCE_RUN_URL"
+          if [ -z "$source_run_url" ]; then
+            source_run_url="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}"
+          fi
+
           echo "upstream_version=${upstream_version}" >> "$GITHUB_OUTPUT"
           echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
+          echo "source_run_url=${source_run_url}" >> "$GITHUB_OUTPUT"
 
       - name: Resolve compatibility target
         id: compat
@@ -81,13 +126,7 @@ jobs:
                   break
 
           if target is None:
-              for entry in supported:
-                  if entry.get("status") != "deprecated":
-                      target = entry
-                      break
-
-          if target is None:
-              print("No supported compatibility entry found", file=sys.stderr)
+              print(f"No supported compatibility entry found for upstream version {upstream_version}", file=sys.stderr)
               sys.exit(1)
 
           required = ["openclawVersion", "commitSha", "upstreamBaseCommit", "patchSetDir"]
@@ -107,8 +146,8 @@ jobs:
       - name: Update CHANGELOG
         env:
           RELEASE_TAG: ${{ steps.normalize.outputs.release_tag }}
-          UPSTREAM_TAG: ${{ inputs.upstream_tag }}
-          SOURCE_RUN_URL: ${{ inputs.source_run_url }}
+          UPSTREAM_TAG: v${{ steps.normalize.outputs.upstream_version }}
+          SOURCE_RUN_URL: ${{ steps.normalize.outputs.source_run_url }}
         run: |
           d="$(date -u +%Y-%m-%d)"
           if grep -q "^## ${RELEASE_TAG}" CHANGELOG.md; then
@@ -194,9 +233,9 @@ jobs:
             git push origin "${RELEASE_TAG}"
           fi
           cat > /tmp/release-notes.md <<EOF
-          Auto-compat release for upstream ${{ inputs.upstream_tag }}.
+          Auto-compat release for upstream v${{ steps.normalize.outputs.upstream_version }}.
 
-          Source: ${{ inputs.source_run_url }}
+          Source: ${{ steps.normalize.outputs.source_run_url }}
           EOF
           gh release view "${RELEASE_TAG}" >/dev/null 2>&1 || gh release create "${RELEASE_TAG}" --title "${RELEASE_TAG}" --notes-file /tmp/release-notes.md
 

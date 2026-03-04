@@ -212,17 +212,6 @@ for a in obj.get("assets",[]):
         break'
 }
 
-latest_release_artifact_url() {
-  local repo="$1"
-  local api="https://api.github.com/repos/${repo}/releases/latest"
-  curl -fsSL "$api" | python3 -c 'import json,sys
-obj=json.load(sys.stdin)
-for a in obj.get("assets",[]):
-    if a.get("name","").endswith("dist-overlay.tar.gz"):
-        print(a.get("browser_download_url",""))
-        break'
-}
-
 parse_json_field() {
   local file="$1"
   local field="$2"
@@ -343,16 +332,11 @@ regular_apply() {
 
     if [[ -n "$artifact" ]]; then
       log "resolved version-matched artifact from release tag: ${version_tag}"
-    else
-      if [[ "${OPENCLAW_PERSONAL_FALLBACK_TO_LATEST_RELEASE:-0}" == "1" ]]; then
-        artifact="$(latest_release_artifact_url "$release_repo" 2>/dev/null || true)"
-        [[ -n "$artifact" ]] && log "version tag not found; fell back to latest release artifact"
-      fi
     fi
 
     if [[ -z "$artifact" ]]; then
       err "failed to discover version-matched artifact (expected tag: ${version_tag})"
-      err "if you want fallback behavior, set OPENCLAW_PERSONAL_FALLBACK_TO_LATEST_RELEASE=1"
+      err "refusing to fall back to an older overlay release"
       exit $E_NOT_FOUND
     fi
   fi
@@ -370,10 +354,18 @@ regular_apply() {
   [[ -d "$overlay_dir" ]] || { err "invalid artifact (dist-overlay missing)"; exit $E_BAD_ARTIFACT; }
   [[ -f "$overlay_dir/metadata.json" ]] || { err "invalid artifact metadata.json missing"; exit $E_BAD_ARTIFACT; }
 
-  local m_ver m_commit overlay_version
+  local m_ver m_commit overlay_version expected_overlay_version
   m_ver="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["targetOpenclawVersion"])' "$overlay_dir/metadata.json")"
   m_commit="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["targetCommitSha"])' "$overlay_dir/metadata.json")"
   overlay_version="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["overlayVersion"])' "$overlay_dir/metadata.json")"
+  expected_overlay_version="overlay-v${version}"
+
+  if [[ "$overlay_version" != "$expected_overlay_version" ]]; then
+    err "overlay version mismatch; refusing to apply"
+    err "local openclaw version=$version requires overlayVersion=$expected_overlay_version"
+    err "artifact overlayVersion=$overlay_version"
+    exit $E_INCOMPATIBLE
+  fi
 
   if [[ "$commit" == "unknown" ]]; then
     if [[ "$m_ver" != "$version" ]]; then

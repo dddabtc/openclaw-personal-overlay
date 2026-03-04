@@ -30,7 +30,7 @@ mkdir -p "$ART/dist-overlay/payload/dist"
 cat > "$ART/dist-overlay/metadata.json" <<'JSON'
 {
   "format": "openclaw-personal-dist-overlay/v1",
-  "overlayVersion": "v0.1.0",
+  "overlayVersion": "overlay-v2026.2.20",
   "targetOpenclawVersion": "2026.2.20",
   "targetCommitSha": "083298ab9da98238c6fb1e008c8994a565427f2a",
   "builtAt": "2026-02-21T00:00:00Z"
@@ -61,7 +61,7 @@ pass "compatible apply success + package.json protected"
 
 STATUS_OUT="$($BIN status)"
 echo "$STATUS_OUT" | grep -q 'compatibility_match=true' || fail "status missing compatibility match"
-echo "$STATUS_OUT" | grep -q 'overlay_version=v0.1.0' || fail "status missing overlay version"
+echo "$STATUS_OUT" | grep -q 'overlay_version=overlay-v2026.2.20' || fail "status missing overlay version"
 pass "status output correctness"
 
 cat > "$INSTALL_ROOT/package.json" <<'JSON'
@@ -79,6 +79,44 @@ set -e
 [[ $rc -ne 0 ]] || fail "incompatible apply should fail"
 [[ "$(cat "$INSTALL_ROOT/dist/banner.txt")" == "OVERLAY" ]] || fail "incompatible apply changed files"
 pass "incompatible apply blocked"
+
+# ======================================================================
+# Test: Overlay version must match installed OpenClaw version
+# ======================================================================
+
+ART_VER_MISMATCH="$TMP/art-overlay-version-mismatch"
+mkdir -p "$ART_VER_MISMATCH/dist-overlay/payload/dist"
+cat > "$ART_VER_MISMATCH/dist-overlay/metadata.json" <<'JSON'
+{
+  "format": "openclaw-personal-dist-overlay/v1",
+  "overlayVersion": "overlay-v2026.2.19",
+  "targetOpenclawVersion": "2026.2.20",
+  "targetCommitSha": "083298ab9da98238c6fb1e008c8994a565427f2a",
+  "builtAt": "2026-02-21T00:00:00Z"
+}
+JSON
+
+echo 'OVERLAY' > "$ART_VER_MISMATCH/dist-overlay/payload/dist/banner.txt"
+(
+  cd "$ART_VER_MISMATCH/dist-overlay"
+  sha256sum payload/dist/banner.txt metadata.json > checksums.sha256
+)
+tar -czf "$TMP/dist-overlay-version-mismatch.tar.gz" -C "$ART_VER_MISMATCH" dist-overlay
+
+cat > "$INSTALL_ROOT/package.json" <<'JSON'
+{
+  "name": "openclaw",
+  "version": "2026.2.20",
+  "gitHead": "083298ab9da98238c6fb1e008c8994a565427f2a"
+}
+JSON
+
+set +e
+"$BIN" apply "$TMP/dist-overlay-version-mismatch.tar.gz" >/tmp/ocp-overlay-version-mismatch.log 2>&1
+rc=$?
+set -e
+[[ $rc -ne 0 ]] || fail "overlay version mismatch should fail"
+pass "overlay version mismatch is rejected"
 
 # ======================================================================
 # Test: Rollback after a successful apply
