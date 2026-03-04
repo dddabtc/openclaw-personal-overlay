@@ -31,7 +31,7 @@ index 9d1110013..cbe6546e9 100644
      applyPatch: agentExec?.applyPatch ?? globalExec?.applyPatch,
 -    mainSessionPolicy: cfg?.sessionPolicies?.main,
 -    sessionPolicies: cfg?.sessionPolicies,
-+    mainSessionPolicy: cfg?.sessionPolicies?.main ?? { forbidLongExec: true, requireBackgroundForExec: false, maxExecTimeoutSec: 30 },
++    mainSessionPolicy: (cfg as any)?.sessionPolicies?.main ?? { forbidLongExec: true, requireBackgroundForExec: false, maxExecTimeoutSec: 30 },
 +    sessionPolicies: {
 +      main: { forbidLongExec: true, requireBackgroundForExec: true, maxExecTimeoutSec: 120, maxOutputBytes: 102_400 },
 +      subagent: { maxOutputBytes: 0 },
