@@ -3,210 +3,105 @@
 [![overlay-ci](https://github.com/dddabtc/openclaw-personal-overlay/actions/workflows/overlay-ci.yml/badge.svg)](https://github.com/dddabtc/openclaw-personal-overlay/actions/workflows/overlay-ci.yml)
 [![Release](https://img.shields.io/github/v/release/dddabtc/openclaw-personal-overlay)](https://github.com/dddabtc/openclaw-personal-overlay/releases)
 
-**TL;DR**: This repo is a **Base + Overlay** layer for OpenClaw personal patches. You keep using official OpenClaw updates, then apply or rollback personal changes with one command. Every apply is guarded by `openclawVersion + commitSha`; if not compatible, it fails safe and does not modify your install.
+Personal overlay patch layer for OpenClaw. Keep using upstream OpenClaw, then apply/rollback personal behavior patches with strict compatibility gating.
 
-## What this patch actually changes (personal behavior layer)
+## Supported OpenClaw versions
 
-This overlay is focused on control-lane reliability and personal UX behavior:
+Current compatibility includes (from `compatibility.json`):
 
-- **Command-word anti-blocking**: command words are handled in a separate control lane, so they do not compete with the main session lane.
-- **`/status` and `/stop` fast path with strict match**: these control commands are matched strictly and handled immediately.
-- **Tool-call default routing to sub-session**: tool calls default to sub-session routing unless explicitly forced to the main session.
-- **Status banner customization**: status output includes personal-build markers (for example, `PERSONAL BUILD` and byline customization).
+- `2026.3.2`
+- `2026.3.1`
+- `2026.2.26`
+- `2026.2.25`
+- `2026.2.22-2`
+- `2026.2.21-2`
+- `2026.2.21`
+- `2026.2.20`
 
----
+> Apply is guarded by **exact** `openclawVersion + commitSha` matching. If not matched, it fails safe without modifying install files.
 
-## What this project is
+## Feature highlights
 
-`openclaw-personal-overlay` is a patch delivery wrapper around official OpenClaw:
+- Control-lane handling for command words (`/status`, `/stop`) with strict fast-path behavior.
+- Default tool-call routing to sub-sessions unless explicitly forced.
+- Main-session safety guard:
+  - `forbidLongExec: true` (timeout and long-task restrictions)
+  - `maxOutputBytes` policy enabled for exec output truncation in main session.
+- Sub-session exec output remains effectively unlimited for long/debug workloads.
+- Release apply hardening:
+  - strict version matching for release artifacts
+  - non-GitHub/curl fallback download path for apply
+  - atomic-ish apply/rollback with install-state tracking.
 
-- **Base** = official OpenClaw (upstream)
-- **Overlay** = personal patch set maintained in this repo
+## Patch set status
 
-The goal is to keep personal behavior customizations without forking your daily usage model.
+- For `v2026.3.2`, the autocompat queue contains **19 patches** in total.
+- Active patch directory: `patches/e7b600e31882-autocompat/`.
 
-## What problem it solves
+## How to use
 
-This project is designed for the common pain point:
-
-1. OpenClaw upstream evolves quickly.
-2. Personal patches can break after updates.
-3. Manual cherry-pick/rebuild is slow and risky.
-
-So this repo provides:
-
-- compatibility gating (`openclawVersion + commitSha`)
-- one-command apply / rollback
-- fail-safe behavior on mismatch (no destructive writes)
-
-## Who it is for
-
-### Regular users (npm/global install)
-You want to keep using installed OpenClaw, then apply personal overlay artifact safely.
-
-### Source developers
-You maintain a local OpenClaw source tree and want to apply patch queues via `git am`.
-
----
-
-## Quick start (minimum commands)
-
-### Regular mode (default)
+### 1) Check status
 
 ```bash
 bin/openclaw-personal status
+```
+
+### 2) Apply overlay
+
+```bash
 bin/openclaw-personal apply
+```
+
+Optional:
+
+- Skip config guard patching:
+
+```bash
+bin/openclaw-personal apply --no-config
+```
+
+- Apply from an explicit artifact:
+
+```bash
+bin/openclaw-personal apply --artifact ./dist-overlay.tar.gz
+```
+
+### 3) Roll back
+
+```bash
 bin/openclaw-personal rollback
 ```
 
-What regular mode does today:
-
-- detects local OpenClaw install
-- checks compatibility matrix
-- resolves a **version-matched release tag** first (`overlay-v<openclawVersion>`), or uses `--artifact`
-- optional fallback to latest release only when `OPENCLAW_PERSONAL_FALLBACK_TO_LATEST_RELEASE=1`
-- applies payload with backup + install-state tracking
-- rollback restores backed-up files from last apply
-
-### Source mode (`--source`)
+### Source mode (patch queue)
 
 ```bash
-bin/openclaw-personal status --source ~/openclaw-src
 bin/openclaw-personal apply --source ~/openclaw-src
 bin/openclaw-personal rollback --source ~/openclaw-src
 ```
 
-Source mode uses patch queues under `patches/*` and `scripts/apply-personal-patch.sh`.
+## Build process
 
----
+Build overlay artifact locally:
 
-## Current status
+```bash
+./scripts/build-dist-overlay.sh
+```
 
-### Implemented
+Cross-machine/version-targeted build (useful when builder host OpenClaw version differs):
 
-- CLI wrapper: `bin/openclaw-personal` (`status/apply/rollback`)
-- Regular-mode compatibility-gated apply/rollback
-- Source-mode patch apply/rollback scripts
-- Overlay artifact builder (`scripts/build-dist-overlay.sh`)
-- Compatibility manifest validation (`scripts/validate-compatibility.py`)
-- CI workflow for validation, upstream smoke packaging, artifacts, tag release assets
+```bash
+TARGET_OPENCLAW_VERSION=2026.3.2 ./scripts/build-dist-overlay.sh
+```
 
-### In progress / planned
+Expected output:
 
-- richer regular-mode lifecycle helpers (for example, explicit service restart orchestration)
-- wider compatibility matrix coverage across more upstream commits/versions
-- stronger live contract checks beyond current smoke scope
-
-(If something is not listed in **Implemented**, treat it as not guaranteed yet.)
-
----
-
-## Compatibility & Safety
-
-Compatibility key is strict and two-dimensional:
-
-- `openclawVersion`
-- `commitSha`
-
-Both must match an entry in `compatibility.json`.
-
-Safety behavior:
-
-- if local install is incompatible, apply exits non-zero
-- if artifact target metadata mismatches local install, apply exits non-zero
-- in both mismatch cases, the script is fail-safe: **no system modification is performed**
-
-This avoids false-positive compatibility when version strings are reused across different commits.
-
----
-
-## Patch Scope (default overlay)
-
-Default patch queue (non-experimental) currently focuses on:
-
-- command-word anti-blocking (command words are not multiplexed on the same lane as normal main-session traffic)
-- `/status` + `/stop` strict-match fast-path control handling
-- tool-call default routing to sub-session (unless explicitly forced to main-session)
-- status banner personalization (`PERSONAL BUILD` / byline customization)
-
-These are represented by the top-level patches in:
-
-- `patches/083298ab9da9-to-91e0ffcfd080/*.patch`
-
-### Optional experimental ZMQ group (disabled by default)
-
-ZMQ/ZeroMQ exec-supervisor patches exist in this repo as an **optional experimental group**, but they are **disabled by default**.
-
-- **Default apply path excludes ZMQ group**:
-  - policy: `compatibility.json` → `defaultOverlayPolicy.exclude`
-  - mechanism: `scripts/apply-personal-patch.sh` applies only `patchSetDir/*.patch` (top-level), so `experimental-zmq/` is not included.
-- **Optional group location**:
-  - `patches/083298ab9da9-to-91e0ffcfd080/experimental-zmq/`
-
-Current state: there is no first-class CLI switch to apply the experimental ZMQ group automatically; opt-in is manual today (**TODO**: add explicit optional-group flags/workflow if needed).
-
----
-
-## CI & Artifacts
-
-Workflow: `.github/workflows/overlay-ci.yml`
-
-Current workflow does:
-
-1. validate compatibility matrix
-2. run CLI tests
-3. run Atlas contract smoke script
-4. checkout pinned upstream OpenClaw commit
-5. apply overlay patch set
-6. run upstream smoke tests (**non-blocking**)
-7. build `dist-overlay.tar.gz` + checksum
-8. upload artifacts
-9. on `v*` tags, publish release assets
-
-### Auto-compat PR workflow
-
-This repo also includes `.github/workflows/auto-compat.yml` for automatic compatibility candidate generation:
-
-- discovers latest `openclaw/openclaw` release tag + commit on a schedule
-- skips if already present in `compatibility.json`
-- clones the current patch queue into a new candidate patch-set dir
-- runs apply + smoke tests + artifact build against the new upstream commit
-- if checks pass, opens a PR that updates `compatibility.json` (manual review required)
-
-### Support branch + release rollover (latest 20)
-
-This repo includes `.github/workflows/support-release-rollover.yml` to enforce versioned support operations:
-
-- when `compatibility.json` changes on `main`, it creates/updates a support branch for the latest compatible version (for example `support/v2026.2.21-2`)
-- creates a matching release tag (`overlay-v<version>`) if missing
-- prunes old support branches and keeps only the latest 20
-- old releases remain as immutable artifacts; if a version is outside latest 20, it is not actively maintained by default
-
-
-### About “non-blocking smoke tests”
-
-`continue-on-error: true` means smoke failures are reported but do not fail the entire workflow job.
-
-- It is an **early warning signal**, not a release-quality guarantee.
-- You should still read logs and validate before trusting a candidate for production use.
-
----
-
-## Mode difference summary
-
-- **Regular mode**: patch an installed OpenClaw using release artifact + compatibility gate.
-- **Source mode**: patch a source checkout using `git am` queue and local build/install flow.
-
-Use regular mode if you do not want to maintain a source fork.
-Use source mode if you actively develop/rebase patches.
-
----
+- `dist-overlay.tar.gz`
+- `dist-overlay.tar.gz.sha256`
 
 ## Repository map
 
-- `bin/openclaw-personal` — user CLI
-- `compatibility.json` — compatibility matrix + policy
-- `patches/` — patch sets (default top-level queue + optional experimental `experimental-zmq/` group)
-- `scripts/` — apply/rollback/build/validate helpers
-- `tests/` — CLI behavior tests
-- `docs/` — regular-user and developer guides
+- `bin/openclaw-personal` — apply/status/rollback CLI
+- `compatibility.json` — support matrix and policy
+- `patches/` — versioned patch queues
+- `scripts/` — build/apply/rollback/validation helpers
+- `.github/workflows/` — CI, release, support rollover, auto-compat
