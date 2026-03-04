@@ -1,43 +1,76 @@
 # openclaw-personal-overlay
 
-**TL;DR** 这是原版 OpenClaw 之上的个人 Overlay：用于在跟进上游升级时保留本地行为补丁，并通过 `openclawVersion + commitSha` 门禁只允许兼容版本 apply；不兼容即 fail-safe 退出，回滚路径统一。
+这是叠加在 OpenClaw 上的个人 Overlay：用严格门禁管理补丁应用，并提供可回滚流程。
 
-[![overlay-ci](https://github.com/dddabtc/openclaw-personal-overlay/actions/workflows/overlay-ci.yml/badge.svg)](https://github.com/dddabtc/openclaw-personal-overlay/actions/workflows/overlay-ci.yml)
+**TL;DR**
+- 把个人行为补丁放在上游仓库之外。
+- 只在 `openclawVersion + commitSha` 匹配时允许应用。
+- 统一入口：`status / apply / rollback`。
+- 普通安装模式有分阶段拷贝、备份和校验保护。
+- 降低流程卡死风险：`/stop`、`/status` 走独立控制通道。
+
+[![CI](https://github.com/dddabtc/openclaw-personal-overlay/actions/workflows/ci.yml/badge.svg)](https://github.com/dddabtc/openclaw-personal-overlay/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/dddabtc/openclaw-personal-overlay)](https://github.com/dddabtc/openclaw-personal-overlay/releases)
 
-OpenClaw 个人 Overlay 补丁层。
+> 英文文档：**[README.md](./README.md)**
 
-> English docs: **[README.md](./README.md)**
+## Overlay 已实现的具体能力（均可在仓库中定位）
 
-## 仓库作用
+1. **严格兼容门禁**  
+   以 `openclawVersion + commitSha` 作为匹配键；不匹配直接非 0 退出（fail-safe）。  
+   证据：`bin/openclaw-personal`、`compatibility.json`、`scripts/validate-compatibility.py`
 
-在尽量不维护长期私有 fork 的前提下，持续跟进上游 OpenClaw，并保留个人行为补丁。
+2. **双交付模式：源码补丁 / 二进制制品**  
+   - 源码模式：按 `patchSetDir` 执行 `git am`  
+   - 制品模式：读取 release artifact，并校验 metadata/checksum  
+   证据：`scripts/apply-personal-patch.sh`、`scripts/rollback-personal-patch.sh`、`scripts/build-dist-overlay.sh`、`dist-overlay/metadata.json`
 
-- 跟进上游更新
-- 安全应用个人补丁
-- 支持快速回滚
+3. **普通用户安装路径的安全措施**  
+   - 自动识别安装目录
+   - 先 staging 再覆盖
+   - 覆盖前备份 payload 文件
+   - rollback 前先做备份完整性校验
+   证据：`bin/openclaw-personal`（`regular_apply`、`regular_rollback`）
 
-## 为什么这个场景下不直接用原版 OpenClaw？
+4. **自动兼容追踪与发布自动化**  
+   - 自动检测上游版本并比较兼容矩阵
+   - full-flow 校验门禁
+   - 发布资产上传后再次 API 校验
+   证据：`.github/workflows/auto-compat.yml`、`.github/workflows/release.yml`、`.github/workflows/ci.yml`
 
-该场景常见痛点：
-- 上游升级后，本地定制容易丢失
-- 缺少严格门禁，补丁可能误打到不兼容版本
-- 回滚路径不统一，出错成本高
-- 发布/同步流程容易随时间漂移
-- 自动化失败不一定能被及时看见
+5. **主会话 exec 风险约束（防卡住）**  
+   Overlay 补丁为主会话增加长任务拦截策略：限制前台长 exec，要求更安全的执行方式。  
+   证据：`patches/e7b600e31882-autocompat/0001-feat-exec-guard-long-exec-in-main-sessions-via-polic.patch`
 
-本 overlay 的解决方式：
-- 将本地行为固化为可版本化 patchset，独立于上游
-- 用 `openclawVersion + commitSha` 做硬性兼容校验
-- 统一 `status / apply / rollback` 标准流程
-- 通过 CI 与 support 工作流固化发布/同步步骤
-- 用 CI 门禁 + 非 0 fail-safe 退出提升失败可见性
+6. **`/stop` 与 `/status` 的控制面快路径（防阻塞）**  
+   Overlay 补丁把这两个命令引导到耐久化控制面，带严格匹配、超时处理和恢复标记。  
+   证据：`patches/e7b600e31882-autocompat/0008-feat-control-plane-route-stop-and-status-via-durable.patch`、`0005-telegram-fast-path-stop-and-status-in-ingress-contro.patch`、`0009-fix-control-plane-align-control-lane-status-timeout-.patch`
 
-## 核心能力
+## 原版 OpenClaw 未覆盖 vs 本 Overlay 提供什么
 
-- 基于 `openclawVersion + commitSha` 的兼容门禁
-- `status / apply / rollback` 一键流程
-- 版本不匹配时 fail-safe 退出（避免误写）
+### 本 Overlay 额外提供
+- 兼容矩阵 + 硬门禁（`compatibility.json` + wrapper/scripts）。
+- 可版本化的个人 patchset，配套可重复 apply/rollback。
+- `/stop`、`/status` 的控制面/命令通道补丁链。
+- 主会话 exec 安全补丁（长 exec 拦截、SSH 家族命令拦截、输出上限）。
+
+### 当前未覆盖（明确说明）
+- **未提供**“一键按组选择实验补丁”的 wrapper 参数（如 ZMQ 实验层）；目前是手动选择路径。  
+  证据：`docs/IMPLEMENTATION.md`（Current limitation / TODO）、`compatibility.json`（`optionalExperimentalPatchDirs`）
+- **未提供**独立守护服务来自动清理所有卡死子进程；当前机制是“策略约束 + 控制面快速通道”。
+
+## 关于“防止 exec 假死/流程卡死”的现状
+
+已实现（在补丁集中）：
+- 主会话长 exec 拦截：`0001...patch`
+- 主会话 SSH 家族命令硬拦截：`0014-fix-exec-hard-block-ssh-and-long-exec-in-main-sessio.patch`
+- 主会话输出上限：`0017-feat-exec-add-session-max-output-bytes-policy.patch`
+- 瞬时错误重试等待可被中断：`0006-fix-make-transient-retry-delay-abortable.patch`
+- `/stop`、`/status` 耐久化控制面：`0008...`、`0009...`、`0015...`、`0016...`
+
+默认未启用：
+- ZMQ exec-supervisor 路径是可选实验层，默认排除。  
+  证据：`docs/IMPLEMENTATION.md`、`compatibility.json`
 
 ## 快速使用
 
@@ -49,12 +82,10 @@ bin/openclaw-personal apply
 bin/openclaw-personal rollback
 ```
 
-指定 artifact（本地路径或 URL）：
+指定 artifact：
 
 ```bash
 bin/openclaw-personal apply --artifact <path-or-url>
-# 或
-bin/openclaw-personal apply <path-or-url>
 ```
 
 ### 源码模式
@@ -65,27 +96,13 @@ bin/openclaw-personal apply --source ~/openclaw-src
 bin/openclaw-personal rollback --source ~/openclaw-src
 ```
 
-## 自动化流程
-
-- **overlay-ci**：校验兼容矩阵、应用补丁、执行基础检查、产出 `dist-overlay.tar.gz`
-- **auto-compat**：发现上游新版本，生成候选 patchset，检查通过后自动开 PR
-- **support-release-rollover**：维护 support 分支/发布，并上传最新 `compatibility.json`
-
-## 安全模型
-
-- 兼容键：`openclawVersion + commitSha`
-- 任一不匹配：`apply` 非 0 退出
-- 默认策略：fail-safe
-
-当前兼容详情请看 `compatibility.json`。
-
 ## 仓库结构
 
-- `bin/openclaw-personal`：CLI 入口
-- `compatibility.json`：兼容矩阵与策略
-- `patches/`：补丁集（含 autocompat）
-- `scripts/`：apply/rollback/build/validate 脚本
-- `.github/workflows/`：CI 与发布自动化
-- `CHANGELOG.md`：版本变更记录
+- `bin/openclaw-personal` — status/apply/rollback 入口
+- `compatibility.json` — 兼容矩阵与 overlay 策略
+- `patches/` — 版本化补丁队列（含 autocompat）
+- `scripts/` — apply/rollback/build/校验脚本
+- `.github/workflows/` — CI、auto-compat、release、autofix
+- `docs/` — 实现与使用说明
 
 Releases: <https://github.com/dddabtc/openclaw-personal-overlay/releases>
