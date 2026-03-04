@@ -104,14 +104,15 @@ index fac68eb82..ca6911a8c 100644
    ExecToolDefaults,
    ExecToolDetails,
  } from "./bash-tools.exec-types.js";
-@@ -148,6 +150,20 @@ async function validateScriptFileForShellBleed(params: {
+@@ -148,6 +150,21 @@ async function validateScriptFileForShellBleed(params: {
    }
  }
  
 +
 +function isMainAgentSession(sessionKey?: string) {
 +  const parsed = parseAgentSessionKey(sessionKey);
-+  return parsed?.rest === "main";
++  if (!parsed) return false;
++  return !parsed.rest.startsWith("subagent:");
 +}
 +
 +function resolveMainSessionMaxExecTimeoutSec(policy?: ExecMainSessionPolicy) {
