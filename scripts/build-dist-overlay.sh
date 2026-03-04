@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WORK_DIR="${1:-}"
+WORK_DIR="${1:-${WORK_DIR:-}}"
 OUT_DIR="${2:-dist-overlay}"
 BASELINE_DIR="${3:-${BASELINE_DIR:-}}"
+if [[ -z "$WORK_DIR" ]]; then
+  if [[ -d "dist-overlay-local/payload/dist" ]]; then
+    WORK_DIR="dist-overlay-local/payload"
+  elif [[ -d "dist" ]]; then
+    WORK_DIR="."
+  fi
+fi
 TARGET_VERSION="${TARGET_VERSION:-}"
 TARGET_OPENCLAW_VERSION="${TARGET_OPENCLAW_VERSION:-}"
 if [[ -n "$TARGET_OPENCLAW_VERSION" ]]; then
