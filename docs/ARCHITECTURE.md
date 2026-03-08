@@ -1,59 +1,67 @@
-# OpenClaw Personal Overlay — 架构文档
+# OpenClaw Personal Overlay — Architecture Document
 
-> 本文档详细记录 openclaw-personal-overlay 的设计目的、实现方式、开发流程和部署验证要点。
+> This document details the design purpose, implementation approach, development workflow, and deployment verification for openclaw-personal-overlay.
 
-## 1. 项目概述
+## 1. Project Overview
 
-### 什么是 openclaw-personal-overlay
+### What is openclaw-personal-overlay
 
-openclaw-personal-overlay 是一个轻量级补丁系统，用于在不修改 OpenClaw 主包的前提下，通过覆盖 `dist/` 目录中的编译产物实现定制功能。
+openclaw-personal-overlay is a **full-replace overlay system** that customizes OpenClaw by completely replacing the `dist/` directory with a modified build. This approach ensures reliable behavior by avoiding partial file replacement issues.
 
-### 为什么需要 Overlay
+### Why Full-Replace Instead of Diff Overlay
 
-1. **不 Fork 官方仓库** — 减少维护负担，避免与上游产生大量冲突
-2. **保留升级能力** — 用户可以正常运行 `npm update openclaw`，overlay 只在兼容版本上生效
-3. **版本锁定** — 通过 `openclawVersion + commitSha` 精确匹配，防止不兼容的补丁被误用
-4. **差异化分发** — 只打包修改过的文件（diff overlay），减小分发体积
+**Previous Approach (Failed):** Diff overlay — only replace modified chunk files.
 
-### 支持的 OpenClaw 版本
+**Problem:** ESM bundler generates complex inter-chunk dependencies. Partial replacement caused:
+- Hash mismatches between chunks
+- Old chunks being loaded due to unchanged import paths
+- Unpredictable runtime behavior from mixed old/new code
+- Some exports missing or pointing to wrong versions
 
-当前 overlay 支持 OpenClaw `v2026.3.7`（commit `42a1394c5c0fb86706f61598e68e0db30e8c99c1`）。
+**Current Approach (Working):** Full-replace — replace entire `dist/` directory.
 
-兼容矩阵见 `compatibility.json`，每个条目包含：
-- `openclawVersion`: 目标 OpenClaw 版本号
-- `commitSha`: 目标 commit SHA（40 字符）
-- `overlayHeadCommit`: overlay 构建时的 commit
-- `patchSetDir`: 对应的 patch 目录
-- `binaryArtifact`: 对应的二进制产物名
+**Benefits:**
+- Reliable: All files are consistent from same build
+- Simple: No complex diff analysis needed
+- Debuggable: Easy to verify what's deployed
+- Trade-off: ~38MB instead of ~100KB, acceptable for GitHub Releases
+
+### Why entry.js Is Now Included
+
+Previous assumption: "entry.js breaks jiti plugin loading" — this was incorrect.
+
+**Reality:** `entry.js` is just the CLI entry point with shebang. The source-compiled `entry.js` hash differs from npm-installed version, but this doesn't break anything. Including it ensures complete consistency.
+
+**Current policy:** Include `entry.js`, `run-main.js`, `index.js`, and all chunks.
+
+### Supported OpenClaw Versions
+
+Current overlay supports OpenClaw `v2026.3.7` (commit `42a1394c5c0f`).
+
+See `compatibility.json` for the compatibility matrix.
 
 ---
 
-## 2. 七个功能要点
+## 2. Seven Feature Points
 
-### 2.1 Exec Guard（主会话 exec 拦截）
+### 2.1 Exec Guard (Main Session Exec Interception)
 
-**设计目的**：防止主会话执行长时间运行的命令阻塞整个会话，强制使用 `sessions_spawn` 派生子会话。
+**Purpose:** Prevent main session from executing long-running commands that block the entire session. Force use of `sessions_spawn` for subagent delegation.
 
-**实现方式**：在 `bash-tools.exec.ts` 的 `createExecTool.execute()` 入口处添加 `checkMainSessionPolicy` 函数检查。
+**Implementation:** Add `checkMainSessionPolicy` function check at `createExecTool.execute()` entry point.
 
-**代码位置**：
-- 源文件：`packages/openclaw/src/reply/bash-tools.exec.ts`
-- 关键函数：`checkMainSessionPolicy()`、`enforceMainSessionPolicy()`
+**Behavior:**
+- Detect if current session is main session
+- Main session exec returns error: `"Main session policy blocked exec. Use sessions_spawn to run in a subagent."`
+- Subagent sessions unaffected
 
-**行为**：
-- 检测当前是否为主会话（`session.id === 'main'` 或类似逻辑）
-- 主会话执行 exec 时返回错误：`"Main session policy blocked exec. Use sessions_spawn to run in a subagent."`
-- 子会话不受影响
+### 2.2 SSH Block (Main Session SSH Command Interception)
 
-### 2.2 SSH Block（主会话 SSH 命令拦截）
+**Purpose:** Block SSH/SCP/SFTP/rsync commands in main session that could cause hangs or security risks.
 
-**设计目的**：阻止主会话执行 SSH/SCP/SFTP/rsync 等可能导致长时间挂起或安全风险的命令。
+**Implementation:** Within `checkMainSessionPolicy`, detect if command matches SSH command family.
 
-**实现方式**：同 exec guard，在 `checkMainSessionPolicy` 中检测命令是否匹配 SSH 命令家族。
-
-**代码位置**：同 2.1
-
-**检测模式**：
+**Detection pattern:**
 ```javascript
 const SSH_COMMANDS = ['ssh', 'scp', 'sftp', 'rsync'];
 function isSshCommand(cmd) {
@@ -61,99 +69,71 @@ function isSshCommand(cmd) {
 }
 ```
 
-### 2.3 Output Cap（主会话输出限制）
+### 2.3 Output Cap (Main Session Output Limit)
 
-**设计目的**：限制主会话的命令输出字节数（默认 50KB），防止输出爆炸导致 token 耗尽或响应超时。
+**Purpose:** Limit main session command output (default 50KB) to prevent token exhaustion or response timeout.
 
-**实现方式**：在主会话 exec 返回结果时截断超长输出。
+**Implementation:** Truncate oversized output when returning exec results in main session.
 
-**代码位置**：`packages/openclaw/src/reply/bash-tools.exec.ts`
+**Default threshold:** 50KB (51200 bytes)
 
-**默认阈值**：50KB（51200 bytes）
+### 2.4 Control Fast-Path
 
-### 2.4 Control Fast-Path（控制命令快速通道）
+**Purpose:** Ensure `/status`, `/stop`, `/model` and other control commands respond immediately even when main session is busy.
 
-**设计目的**：确保 `/status`、`/stop`、`/model` 等控制命令在主会话繁忙时仍能立即响应，不被 session lane 队列阻塞。
+**Implementation:** Modify `sequential-key.ts` to assign all slash commands to a separate sequential key `:control`, binding them to a dedicated processing queue.
 
-**实现方式**：修改 `sequential-key.ts`，为所有斜杠命令分配独立的 sequential key `:control`，使其绑定到单独的处理队列。
+**Effect:**
+- Regular messages queue and wait
+- Control commands use `:control` lane, execute immediately
 
-**代码位置**：`packages/openclaw/src/reply/sequential-key.ts`
+### 2.5 Abortable Retry
 
-**效果**：
-- 常规消息排队等待处理
-- 控制命令走 `:control` 通道，立即执行
+**Purpose:** Make transient error retry sleep abortable, allowing `/stop` to immediately terminate waiting.
 
-### 2.5 Abortable Retry（可中断重试）
+**Implementation:** v2026.3.7 has built-in `sleepWithAbort` function.
 
-**设计目的**：使瞬态错误重试的 sleep 可被中断，允许用户发送 `/stop` 时立即终止等待。
+**Status:** ✅ Built-in, no overlay needed
 
-**实现方式**：v2026.3.7 已内置 `sleepWithAbort` 函数，无需 patch。
+### 2.6 Sub-Agent Timeout
 
-**代码位置**：上游已实现（`packages/openclaw/src/reply/sleep.ts`）
+**Purpose:** Extend default subagent timeout from upstream's shorter value (e.g., 1800s) to 6 hours (21600s) for complex tasks.
 
-**状态**：✅ 内置，无需 overlay
+**Implementation:** Modify `DEFAULT_TIMEOUT_SECONDS` constant in `subagent-spawn.ts`.
 
-### 2.6 Sub-Agent Timeout（子会话超时）
-
-**设计目的**：将默认子会话超时从上游较短的值（如 1800s）延长到 6 小时（21600s），适应复杂任务需要。
-
-**实现方式**：修改 `subagent-spawn.ts` 中的 `DEFAULT_TIMEOUT_SECONDS` 常量。
-
-**代码位置**：`packages/openclaw/src/reply/subagent-spawn.ts`
-
-**修改**：
+**Change:**
 ```javascript
 const DEFAULT_TIMEOUT_SECONDS = 21600; // 6 hours
 ```
 
-### 2.7 PERSONAL BUILD 标识
+### 2.7 PERSONAL BUILD Indicator
 
-**设计目的**：在 Telegram `/status` 和 CLI `openclaw status` 输出中显示 `PERSONAL BUILD` 标识，方便识别是否应用了 overlay。
+**Purpose:** Display `PERSONAL BUILD` indicator with date and GitHub link in `/status` output to identify overlay is applied.
 
-**实现方式**：
-- Telegram status：修改 `packages/openclaw/src/reply/status.ts`
-- CLI status：修改 `packages/openclaw/src/daemon-cli/status.print.ts`
-
-**代码位置**：
-- `packages/openclaw/src/reply/status.ts`
-- `packages/openclaw/src/daemon-cli/status.print.ts`
-
-**输出示例**：
+**Format:**
 ```
-Gateway: running (PERSONAL BUILD 2026-03-08)
+🧢 PERSONAL BUILD · 2026-03-08T12:53(UTC)
+https://github.com/dddabtc
 ```
 
 ---
 
-## 3. 开发流程
+## 3. Development Workflow
 
-### 源码位置
+### Source Location
 
-开发时使用临时目录克隆 OpenClaw 源码：
+Development uses temporary directory for OpenClaw source:
 ```bash
 /tmp/overlay-fresh/openclaw-src
 ```
 
-Checkout 目标版本：
+Checkout target version:
 ```bash
 cd /tmp/overlay-fresh/openclaw-src
 git checkout v2026.3.7
 ```
 
-### Patch 流程
-
-1. **修改源码**：在源码目录中进行修改
-2. **生成 patch**：
-   ```bash
-   git format-patch v2026.3.7 --stdout > ~/openclaw-personal-overlay/patches/0001-my-change.patch
-   ```
-   或批量生成：
-   ```bash
-   git format-patch v2026.3.7 -o ~/openclaw-personal-overlay/patches/
-   ```
-3. **存入 patches 目录**：按编号命名（0001-, 0002-, ...）
-
-### 构建
+### Build Process
 
 ```bash
 cd /tmp/overlay-fresh/openclaw-src
@@ -161,496 +141,290 @@ pnpm install
 pnpm build
 ```
 
-### 打包
+### Packaging (Full-Replace Mode)
 
-使用 `scripts/build-dist-overlay.sh` 打包：
 ```bash
-./scripts/build-dist-overlay.sh /tmp/overlay-fresh/openclaw-src dist-overlay
+# Create overlay structure
+mkdir -p /tmp/full-overlay/dist-overlay/payload
+cp -r dist/ /tmp/full-overlay/dist-overlay/payload/dist/
+
+# Create metadata
+cat > /tmp/full-overlay/dist-overlay/metadata.json << 'EOF'
+{
+  "overlayVersion": "overlay-v2026.3.7",
+  "buildDate": "2026-03-08T16:53:00Z",
+  "baseVersion": "2026.3.7",
+  "baseCommit": "42a1394c5c0f",
+  "mode": "full-replace"
+}
+EOF
+
+# Generate checksums
+cd /tmp/full-overlay/dist-overlay
+find payload -type f -exec sha256sum {} \; > checksums.sha256
+
+# Create tarball
+cd /tmp/full-overlay
+tar czf dist-overlay.tar.gz dist-overlay/
 ```
 
-**关键点**：
-- 只提取修改过的 dist 文件（主要是 `reply-*.js` chunk）
-- 合并 baseline dist 保证导出完整性
-- 生成 `metadata.json` 和 `checksums.sha256`
-
-### 发布
+### Release
 
 ```bash
-# 打包 tar.gz
-tar czf dist-overlay.tar.gz -C dist-overlay .
-
-# 计算校验和
+# Calculate checksum
 sha256sum dist-overlay.tar.gz > dist-overlay.tar.gz.sha256
 
-# 创建 GitHub Release
-gh release create overlay-v2026.3.7 dist-overlay.tar.gz dist-overlay.tar.gz.sha256
+# Create GitHub Release
+gh release create overlay-v2026.3.7 dist-overlay.tar.gz dist-overlay.tar.gz.sha256 \
+  --title "overlay-v2026.3.7" \
+  --notes "Full dist replacement overlay with all 7 features."
 ```
 
 ---
 
-## 4. Overlay Tar 包结构
+## 4. Overlay Tar Structure
 
 ```
 dist-overlay/
-├── metadata.json          # overlay 元数据
-├── checksums.sha256       # payload 文件校验和
+├── metadata.json          # Overlay metadata
+├── checksums.sha256       # Payload file checksums
 └── payload/
     └── dist/
-        ├── reply-XXXX.js  # 修改过的 chunk 文件
-        └── ...            # 其他必要文件
+        ├── entry.js       # CLI entry point
+        ├── run-main.js    # CLI runner
+        ├── index.js       # Main module entry
+        ├── reply-XXXX.js  # Reply handling chunk
+        └── ...            # All other dist files
 ```
 
-### metadata.json 格式
+### metadata.json Format
 
 ```json
 {
-  "format": "openclaw-personal-dist-overlay/v1",
   "overlayVersion": "overlay-v2026.3.7",
-  "targetOpenclawVersion": "2026.3.7",
-  "targetCommitSha": "42a1394c5c0fb86706f61598e68e0db30e8c99c1",
-  "builtAt": "2026-03-08T15:18:00Z",
-  "features": [
-    "PERSONAL_BUILD_tag_in_status",
-    "subagent_default_timeout_6h",
-    "main_session_exec_block_v10"
-  ],
-  "notes": "..."
+  "buildDate": "2026-03-08T16:53:00Z",
+  "baseVersion": "2026.3.7",
+  "baseCommit": "42a1394c5c0f",
+  "mode": "full-replace"
 }
 ```
 
-### 重要约束
-
-1. **不能包含 entry.js**
-   - 原因：jiti 插件加载时会把 `index.js` 当目录处理，包含 `entry.js` 会破坏插件加载机制
-   - CI 验证：`validate-overlay.yml` 检查无 `entry.js`
-
-2. **index.js 只在必要时包含**
-   - 当 reply chunk 的 hash 变更导致 index.js 中的引用需要更新时才包含
-   - 当前 overlay 是 diff overlay，只包含修改的文件
-
-3. **必须保证导出完整性**
-   - 使用 baseline + patch merge 方式构建
-   - `validate-dist-exports.sh` 验证 `plugin-sdk` 导出完整
+**Required fields:**
+- `overlayVersion`: Must start with `overlay-v`
+- `mode`: Must be `full-replace`
+- `baseVersion`: Target OpenClaw version
+- `baseCommit`: Target commit SHA (short or full)
 
 ---
 
-## 5. Apply 流程
+## 5. Apply Flow
 
-### `bin/openclaw-personal apply` 完整逻辑
+### `bin/openclaw-personal apply` Logic
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│ 1. 检测本地 OpenClaw 安装                                │
-│    - 通过 which openclaw 定位安装目录                    │
-│    - 读取 package.json 获取版本号                        │
-│    - 计算 dist 目录的 commitSha                          │
+│ 1. Detect local OpenClaw installation                   │
+│    - Locate install directory via `which openclaw`      │
+│    - Read package.json for version                      │
 └───────────────────────────┬─────────────────────────────┘
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────┐
-│ 2. 从 compatibility.json 匹配支持版本                    │
-│    - 比对 openclawVersion + commitSha                   │
-│    - 不匹配则报错退出（E_INCOMPATIBLE）                  │
+│ 2. Download dist-overlay.tar.gz from GitHub Release     │
+│    - Default repo: dddabtc/openclaw-personal-overlay    │
 └───────────────────────────┬─────────────────────────────┘
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────┐
-│ 3. 从 GitHub Release 下载 dist-overlay.tar.gz           │
-│    - 默认仓库：dddabtc/openclaw-personal-overlay        │
-│    - 也可指定本地路径或 URL                              │
+│ 3. Backup current dist/ directory                       │
+│    - Save to ~/.local/state/openclaw-personal-overlay/  │
+│    - Record backup location in install-state.json       │
 └───────────────────────────┬─────────────────────────────┘
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────┐
-│ 4. 备份当前 dist                                         │
-│    - 保存到 ~/.local/state/openclaw-personal-overlay/   │
-│    - 记录 install-state.json                            │
+│ 4. Full replace: rsync payload/dist/ to OpenClaw dist/  │
+│    - Delete existing files not in payload               │
+│    - Complete replacement, not merge                    │
 └───────────────────────────┬─────────────────────────────┘
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────┐
-│ 5. 解压 payload/dist/* 到 OpenClaw dist 目录             │
-│    - 覆盖对应文件                                        │
-│    - 保留未修改的文件                                    │
+│ 5. Set agents.defaults.timeoutSeconds=21600             │
+│    - Via `openclaw config set` command                  │
 └───────────────────────────┬─────────────────────────────┘
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────┐
-│ 6. 设置 agents.defaults.timeoutSeconds=21600            │
-│    - 通过 openclaw config set 命令                       │
-│    - 确保子会话使用 6 小时超时                           │
-└───────────────────────────┬─────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────┐
-│ 7. 输出成功信息                                          │
-│    - 提示重启 gateway：openclaw gateway restart          │
+│ 6. Output success, prompt gateway restart               │
 └─────────────────────────────────────────────────────────┘
 ```
 
-### Rollback 逻辑
+### Rollback Logic
 
 ```bash
 bin/openclaw-personal rollback
 ```
 
-1. 读取 `install-state.json` 获取备份位置
-2. 从备份恢复原始 dist 文件
-3. 清理 install state
-4. 提示重启 gateway
+1. Read `install-state.json` for backup location
+2. Full restore: rsync backup back to dist/
+3. Clear install state
+4. Prompt gateway restart
 
 ---
 
-## 6. 配置文件
-
-### compatibility.json
-
-```json
-{
-  "schema": 3,
-  "project": "openclaw-personal-overlay",
-  "generatedAt": "2026-02-21T04:17:00Z",
-  "channels": {
-    "source": {
-      "enabled": true,
-      "applyScript": "scripts/apply-personal-patch.sh",
-      "rollbackScript": "scripts/rollback-personal-patch.sh"
-    },
-    "binary": {
-      "enabled": true,
-      "artifactName": "dist-overlay.tar.gz",
-      "installStateFile": "~/.local/state/openclaw-personal-overlay/install-state.json"
-    }
-  },
-  "supported": [
-    {
-      "id": "oc-2026.3.7-personal-overlay",
-      "openclawVersion": "2026.3.7",
-      "commitSha": "42a1394c5c0fb86706f61598e68e0db30e8c99c1",
-      "upstreamBaseCommit": "42a1394c5c0fb86706f61598e68e0db30e8c99c1",
-      "overlayHeadCommit": "a37d4949b",
-      "patchSetDir": "patches/e7b600e31882-autocompat",
-      "binaryArtifact": "dist-overlay.tar.gz",
-      "atlasCompat": {
-        "memory_search": "expected",
-        "memory_get": "expected"
-      },
-      "notes": "...",
-      "status": "supported"
-    }
-  ]
-}
-```
-
-### metadata.json 格式要求
-
-- `overlayVersion` 必须以 `overlay-v` 开头
-- `targetOpenclawVersion` 必须与 compatibility.json 中的版本匹配
-- `targetCommitSha` 必须是 40 字符的完整 SHA
-
-### 113 的 AGENTS.md exec guard 响应规则
-
-在 113（192.168.1.113 WSL2）的 `AGENTS.md` 中配置：
-
-```markdown
-## Exec Policy
-
-当收到 "Main session policy blocked exec" 错误时：
-1. 不要重试 exec
-2. 立即使用 sessions_spawn 创建子会话执行任务
-3. 等待子会话完成后汇报结果
-```
-
----
-
-## 7. CI 设计
+## 6. CI Design
 
 ### validate-overlay.yml
 
-**目的**：验证 overlay tar 包的完整性和正确性
+**Purpose:** Validate overlay tarball integrity and correctness for full-replace mode.
 
-**验证步骤**：
-1. **提取 overlay**：解压 `dist-overlay.tar.gz`
-2. **验证 metadata.json**：检查 `overlayVersion` 以 `overlay-v` 开头
-3. **验证无 entry.js**：确保不包含会破坏 jiti 加载的 entry.js
-4. **验证 checksums**：校验 `checksums.sha256`
-5. **验证特征字符串**：检查 reply chunk 包含关键实现：
-   - `PERSONAL BUILD`
+**Validation steps:**
+
+1. **Extract overlay:** Unpack `dist-overlay.tar.gz`
+
+2. **Validate metadata:** 
+   - `overlayVersion` starts with `overlay-v`
+   - `mode` is `full-replace`
+
+3. **Validate full dist structure:**
+   - `entry.js` present (CLI entry)
+   - `run-main.js` present (CLI runner)
+   - `index.js` present (main entry)
+   - At least one `reply-*.js` chunk
+   - `index.js` references existing reply chunk
+
+4. **Validate checksums:** Verify `checksums.sha256`
+
+5. **Verify features:** Check reply chunk contains:
+   - `PERSONAL BUILD` with date and link
    - `enforceMainSessionPolicy`
-   - `sessions_spawn`（错误消息中）
-   - `isSshCommand` / SSH block
-   - `21600`（子会话超时）
-
-### 其他 CI 工作流
-
-| 工作流 | 目的 |
-|--------|------|
-| `ci.yml` | 基础 CI：lint、test、构建验证 |
-| `auto-compat.yml` | 检测上游新版本，自动 rebase patch，验证兼容性 |
-| `release.yml` | 发布流程：构建、验证、创建 GitHub Release |
-| `auto-review-merge.yml` | 自动审核和合并 PR |
+   - `sessions_spawn` (in error message)
+   - SSH block patterns
+   - `21600` (subagent timeout)
 
 ---
 
-## 8. 验证要点（部署后检查清单）
+## 7. Lessons Learned
 
-### 自动化验证
+### Diff Overlay Failure (2026-03-08)
 
-- [ ] `bin/openclaw-personal apply` 自动下载并应用成功
-- [ ] `openclaw gateway restart` 后 gateway running
+**Attempt 1:** Only include modified `reply-*.js` chunk.
+- **Result:** Patch not loaded. `index.js` still referenced old chunk hash.
 
-### 功能验证
+**Attempt 2:** Include `index.js` + new `reply-*.js`.
+- **Result:** Still failed. Complex import chains between chunks.
 
-- [ ] `/status` 显示 `PERSONAL BUILD` 和正确日期
-- [ ] 主会话 exec 被拦截（返回 "Main session policy blocked"）
-- [ ] `/status` 在主会话繁忙时仍能立即响应（control fast-path）
-- [ ] AI 收到 exec blocked 后立即调用 `sessions_spawn`
+**Attempt 3:** Exclude `entry.js` thinking it breaks jiti.
+- **Result:** Unnecessary restriction based on incorrect assumption.
 
-### 技术验证
+**Final solution:** Full-replace mode. Replace entire `dist/` directory.
 
-- [ ] reply chunk 中包含 `checkMainSessionPolicy`（grep 计数 > 0）
-- [ ] reply chunk 中包含 `PERSONAL BUILD`（grep 计数 > 0）
-- [ ] reply chunk 中包含 `21600`（grep 计数 > 0）
+### Why npm-installed vs Source-compiled Differ
 
-### 验证命令
+npm package and source-compiled OpenClaw have different chunk hashes because:
+- Bundler uses file content hash for chunk names
+- Different build environments produce slightly different output
+- Even same source can produce different hashes
+
+**Conclusion:** Overlay must be built from source, then completely replace npm-installed dist. Mixing is unreliable.
+
+### Hash Consistency is Critical
+
+ESM bundler creates complex dependency graphs:
+```
+index.js → reply-XXXX.js → chunk-YYYY.js → chunk-ZZZZ.js
+```
+
+If any hash mismatches, the import chain breaks. Partial replacement cannot guarantee consistency.
+
+**Solution:** Full replacement ensures all files are from same build with consistent hashes.
+
+---
+
+## 8. Verification Checklist
+
+### After Apply
+
+- [ ] `openclaw gateway restart` succeeds
+- [ ] `/status` shows `🧢 PERSONAL BUILD · <date>(UTC)`
+- [ ] `/status` shows `https://github.com/dddabtc`
+- [ ] Main session exec returns "Main session policy blocked"
+- [ ] `/status` responds immediately during busy main session
+
+### Technical Verification
 
 ```bash
-# 检查 PERSONAL BUILD 标识
-openclaw status | grep -i "PERSONAL BUILD"
+# Check PERSONAL BUILD in reply chunk
+DIST=$(dirname $(which openclaw))/../lib/node_modules/openclaw/dist
+REPLY=$(ls $DIST/reply-*.js | head -1)
 
-# 检查 reply chunk 特征
-REPLY=$(ls ~/.nvm/versions/node/*/lib/node_modules/openclaw/dist/reply-*.js | head -1)
-grep -c "checkMainSessionPolicy" "$REPLY"
-grep -c "PERSONAL BUILD" "$REPLY"
-grep -c "21600" "$REPLY"
+grep -c "PERSONAL BUILD" "$REPLY"        # > 0
+grep -c "enforceMainSessionPolicy" "$REPLY"  # > 0
+grep -c "21600" "$REPLY"                 # > 0
+grep "github.com/dddabtc" "$REPLY"       # should match
 ```
 
 ---
 
-## 9. 已知问题和注意事项
+## 9. Quick Reference
 
-### npm 包与源码编译的差异
+### User Commands
 
-npm 包安装的 OpenClaw 和从源码编译的版本，chunk 文件名（hash）可能不同。这是因为：
-- bundler 使用文件内容 hash 生成文件名
-- 不同环境的 build 可能产生略微不同的输出
-
-**应对**：overlay 针对 npm 包版本构建，不直接适用于源码编译版本。
-
-### Bundler Chunk 分割
-
-bundler 可能将相关函数拆分到不同的 chunk 文件中。必须验证关键函数在同一个 reply chunk：
-- `checkMainSessionPolicy`
-- `enforceMainSessionPolicy`
-- `isSshCommand`
-
-**验证方法**：
 ```bash
-grep -l "checkMainSessionPolicy" dist/reply-*.js
-grep -l "isSshCommand" dist/reply-*.js
+# Check status
+bin/openclaw-personal status
+
+# Apply overlay
+bin/openclaw-personal apply
+
+# Rollback to original
+bin/openclaw-personal rollback
+
+# Restart gateway
+openclaw gateway restart
 ```
 
-### 113 环境
+### Development Commands
 
-- 113 是 WSL2 on 192.168.1.113
-- SSH 连接：`ssh zhaod@192.168.1.113` 或 `bash scripts/ssh-113.sh`
-- 该环境用于测试 overlay 应用
-
-### Overlay Tar 结构
-
-overlay tar 结构必须严格匹配 apply 脚本期望的格式：
-```
-dist-overlay/
-  metadata.json
-  checksums.sha256
-  payload/
-    dist/
-      ...
-```
-
-任何结构变化都需要同步更新 `bin/openclaw-personal` 的解压逻辑。
-
----
-
-## 10. Bug 修复记录
-
-### 2026-03-08: index.js 必须包含在 overlay 中
-
-**问题**：overlay 只包含 `reply-jwObgEFa.js` 但没有 `index.js`。由于 baseline 的 `index.js` 引用旧的 `reply-C5LKjXcC.js`，新的 reply chunk 永远不会被加载。导致 PERSONAL BUILD 不显示，exec guard 不生效。
-
-**根因**：构建脚本的差异检测逻辑将 `reply-jwObgEFa.js` 标记为"new file"（因为 baseline 里的是 `reply-C5LKjXcC.js`，文件名不同），而默认 `INCLUDE_NEW_DIST_FILES=0`，所以新文件被跳过。
-
-**修复**：
-1. 手动确保 `index.js` 和新的 `reply-*.js` 都包含在 overlay 中
-2. 添加 CI 验证步骤：`Validate index.js present`
-3. CI 检查 `index.js` 引用的 reply chunk 是否存在于 overlay 中
-
-**教训**：当 bundler 生成的 chunk 文件名（hash）变化时，`index.js` 必须一起更新。Diff overlay 必须包含引用关系完整的文件集合。
-
-### 2026-03-08: 改用 Full-Replace 模式（而非 Diff Overlay）
-
-**问题**：即使包含 `index.js`，diff overlay 仍然无法正常工作。原因是 Node.js 的模块系统和 bundler 的 chunk 分割机制导致复杂的依赖关系，仅替换部分文件无法可靠地改变运行时行为。
-
-**根因分析**：
-1. ESM bundler 生成的 chunk 之间有复杂的 import 关系
-2. `index.js` 是入口，但它 import 的 chunk 可能还会 import 其他 chunk
-3. 如果只替换部分 chunk，可能导致：
-   - 旧 chunk 被加载（因为引用路径没变）
-   - 新旧 chunk 混用导致不可预测的行为
-   - 某些 export 丢失或指向错误版本
-
-**决策**：**从 diff overlay 改为 full-replace overlay**
-
-**新策略**：
-- 打包完整的 `dist/` 目录（排除 `entry.js`）
-- Apply 时用 rsync 完整替换目标 dist
-- 不再做差异分析，直接全量覆盖
-
-**为什么排除 entry.js**：
-- `entry.js` 是 CLI 入口脚本，包含 shebang 和基础环境设置
-- 它不包含业务逻辑，且替换它可能破坏 PATH 或权限
-- jiti 插件系统可能依赖 entry.js 的特定行为
-
-**权衡**：
-- Overlay 体积从 ~100KB 增加到 ~19MB
-- 但更可靠、更简单、更好调试
-- 体积增加可以接受（一次性下载，GitHub Release 支持）
-
-**实现**：
 ```bash
-# 打包时排除 entry.js
-rsync -a --exclude='entry.js' dist/ payload/dist/
+# Build from source
+cd /tmp/overlay-fresh/openclaw-src
+pnpm build
 
-# Apply 时全量替换（不是 merge）
-rsync -a --delete --exclude='entry.js' payload/dist/ $OPENCLAW_DIST/
+# Package overlay
+mkdir -p /tmp/overlay/dist-overlay/payload
+cp -r dist/ /tmp/overlay/dist-overlay/payload/dist/
+# ... create metadata.json and checksums ...
+tar czf dist-overlay.tar.gz dist-overlay/
+
+# Verify features
+grep -c "PERSONAL BUILD" dist/reply-*.js
+grep -c "enforceMainSessionPolicy" dist/reply-*.js
 ```
 
-**教训**：对于复杂的 bundler 产物，差异化 overlay 的复杂度可能超过收益。Full-replace 更可靠。
-
 ---
 
-## 11. 关键决策记录
-
-### 选择 Overlay 方式而非 Fork
-
-**决策**：使用 overlay 覆盖而非 fork 官方仓库
-
-**原因**：
-- 减少维护负担：不需要持续跟踪上游变化
-- 保留升级能力：用户可以正常升级 OpenClaw
-- 精确控制：只在兼容版本上生效
-
-### 不包含 entry.js
-
-**决策**：overlay 中不包含 `entry.js`
-
-**原因**：jiti 插件系统会把 `index.js` 当目录处理。如果 overlay 包含 `entry.js`，会破坏插件加载机制，导致所有 extension 报错。
-
-**参考**：`POSTMORTEM.md` 记录了相关问题的完整分析。
-
-### Exec Guard 用简单 Error Return
-
-**决策**：主会话 exec 被拦截时返回错误，而非自动转发到子会话
-
-**原因**：
-- 更可靠：避免自动转发带来的复杂性
-- 更透明：让 AI 明确知道需要使用 `sessions_spawn`
-- 更可控：AI 可以决定如何处理（是否派生、派生到哪里）
-
-### 使用 Opus 模型构建 Patch
-
-**决策**：使用 Opus 模型而非 Codex 生成 patch
-
-**原因**：Codex 生成的 patch 语法正确但运行时不生效。Opus 模型能更好地理解 TypeScript/JavaScript 运行时行为，生成功能正确的 patch。
-
----
-
-## 附录 A：文件清单
+## Appendix: File Layout
 
 ```
 openclaw-personal-overlay/
 ├── bin/
-│   └── openclaw-personal        # 主命令行工具
-├── compatibility.json           # 兼容性矩阵
-├── dist-overlay/                # 构建产物目录
-│   ├── metadata.json
-│   ├── checksums.sha256
-│   └── payload/dist/
-├── dist-overlay.tar.gz          # 打包的发布产物
+│   └── openclaw-personal        # Main CLI tool
+├── compatibility.json           # Compatibility matrix
+├── dist-overlay.tar.gz          # Release artifact (~38MB)
+├── dist-overlay.tar.gz.sha256   # Checksum
 ├── docs/
-│   ├── ARCHITECTURE.md          # 本文档
-│   ├── DEVELOPER_GUIDE.md       # 开发者指南
-│   ├── IMPLEMENTATION.md        # 实现计划
-│   └── REGULAR_USER_GUIDE.md    # 用户指南
-├── patches/                     # Patch 文件目录
-│   ├── 0001-*.patch
-│   ├── 0002-*.patch
+│   ├── ARCHITECTURE.md          # This document
 │   └── ...
-├── scripts/
-│   ├── apply-personal-patch.sh  # 源码模式 apply
-│   ├── build-dist-overlay.sh    # 构建 overlay
-│   ├── rollback-personal-patch.sh
-│   ├── validate-compatibility.py
-│   ├── validate-dist-exports.sh
-│   └── validate-release.sh
 ├── .github/workflows/
-│   ├── auto-compat.yml
-│   ├── ci.yml
-│   ├── release.yml
-│   └── validate-overlay.yml
+│   └── validate-overlay.yml     # CI validation
 ├── CHANGELOG.md
-├── CONTRIBUTING.md
-├── POSTMORTEM.md
 └── README.md
 ```
 
 ---
 
-## 附录 B：快速参考
-
-### 常用命令
-
-```bash
-# 检查状态
-bin/openclaw-personal status
-
-# 应用 overlay
-bin/openclaw-personal apply
-
-# 回滚
-bin/openclaw-personal rollback
-
-# 重启 gateway
-openclaw gateway restart
-```
-
-### 开发命令
-
-```bash
-# 从源码构建
-cd /tmp/overlay-fresh/openclaw-src
-pnpm build
-
-# 打包 overlay
-./scripts/build-dist-overlay.sh /tmp/overlay-fresh/openclaw-src dist-overlay
-
-# 验证 overlay
-tar xzf dist-overlay.tar.gz -C /tmp/test-extract
-./scripts/validate-dist-exports.sh /tmp/test-extract/dist-overlay/payload 2026.3.7
-```
-
-### 调试命令
-
-```bash
-# 检查 reply chunk 特征
-REPLY=$(ls dist-overlay/payload/dist/reply-*.js | head -1)
-grep -c "checkMainSessionPolicy" "$REPLY"
-grep -c "PERSONAL BUILD" "$REPLY"
-grep -c "21600" "$REPLY"
-grep -c "isSshCommand" "$REPLY"
-```
-
----
-
-*文档版本：2026-03-08*
-*对应 Overlay 版本：overlay-v2026.3.7*
+*Document version: 2026-03-08*
+*Overlay version: overlay-v2026.3.7*
+*Mode: full-replace*

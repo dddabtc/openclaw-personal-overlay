@@ -25,32 +25,65 @@ jobs:
       
       - name: Validate metadata
         run: |
-          OVERLAY_VER=$(python3 -c "import json; print(json.load(open('/tmp/overlay-extract/dist-overlay/metadata.json'))['overlayVersion'])")
+          META=/tmp/overlay-extract/dist-overlay/metadata.json
+          OVERLAY_VER=$(python3 -c "import json; print(json.load(open('$META'))['overlayVersion'])")
+          MODE=$(python3 -c "import json; print(json.load(open('$META')).get('mode', 'unknown'))")
           echo "overlayVersion: $OVERLAY_VER"
+          echo "mode: $MODE"
           [[ "$OVERLAY_VER" == overlay-v* ]] || { echo "FAIL: overlayVersion must start with overlay-v"; exit 1; }
+          [[ "$MODE" == "full-replace" ]] || { echo "FAIL: mode must be full-replace"; exit 1; }
       
-      - name: Validate no entry.js
-        run: |
-          ! find /tmp/overlay-extract/dist-overlay/ -name "entry.js" | grep . || { echo "FAIL: entry.js must not be in overlay"; exit 1; }
-      
-      - name: Validate index.js present
+      - name: Validate full dist structure
         run: |
           DIST=/tmp/overlay-extract/dist-overlay/payload/dist
+          
+          # Must have index.js (main entry)
           if [ ! -f "$DIST/index.js" ]; then
-            echo "FAIL: index.js must be present in overlay (required to reference new reply chunk)"
+            echo "FAIL: index.js must be present (full-replace mode)"
             exit 1
           fi
-          # Verify index.js references a reply chunk that exists in overlay
+          echo "OK: index.js present"
+          
+          # Must have run-main.js (CLI runner)
+          if [ ! -f "$DIST/run-main.js" ]; then
+            echo "FAIL: run-main.js must be present (full-replace mode)"
+            exit 1
+          fi
+          echo "OK: run-main.js present"
+          
+          # Must have entry.js (CLI entry point)
+          if [ ! -f "$DIST/entry.js" ]; then
+            echo "FAIL: entry.js must be present (full-replace mode)"
+            exit 1
+          fi
+          echo "OK: entry.js present"
+          
+          # Must have at least one reply chunk
+          REPLY_COUNT=$(ls "$DIST"/reply-*.js 2>/dev/null | wc -l)
+          if [ "$REPLY_COUNT" -eq 0 ]; then
+            echo "FAIL: no reply-*.js chunk found"
+            exit 1
+          fi
+          echo "OK: $REPLY_COUNT reply chunk(s) found"
+          
+          # Verify index.js references a reply chunk that exists
           REPLY_REF=$(grep -oP 'from "\./reply-[^"]+\.js"' "$DIST/index.js" | head -1 | grep -oP 'reply-[^"]+\.js')
           if [ -z "$REPLY_REF" ]; then
             echo "FAIL: index.js does not reference any reply chunk"
             exit 1
           fi
           if [ ! -f "$DIST/$REPLY_REF" ]; then
-            echo "FAIL: index.js references $REPLY_REF but file not found in overlay"
+            echo "FAIL: index.js references $REPLY_REF but file not found"
             exit 1
           fi
-          echo "OK: index.js references $REPLY_REF (present in overlay)"
+          echo "OK: index.js references $REPLY_REF (present)"
+          
+          # Count total files in dist
+          TOTAL_FILES=$(find "$DIST" -type f | wc -l)
+          echo "Total files in dist: $TOTAL_FILES"
+          if [ "$TOTAL_FILES" -lt 50 ]; then
+            echo "WARN: suspiciously few files ($TOTAL_FILES), expected 100+ for full dist"
+          fi
       
       - name: Validate checksums
         run: |
@@ -66,23 +99,38 @@ jobs:
         run: |
           DIST=/tmp/overlay-extract/dist-overlay/payload/dist
           REPLY=$(ls $DIST/reply-*.js 2>/dev/null | head -1)
-          if [ -z "$REPLY" ]; then
-            echo "No reply chunk found in overlay"
-            exit 1
-          fi
           echo "Reply chunk: $REPLY"
           
-          echo "=== PERSONAL BUILD ==="
-          grep -c "PERSONAL BUILD" "$REPLY" || echo "0"
+          echo ""
+          echo "=== Feature verification ==="
           
-          echo "=== enforceMainSessionPolicy ==="
-          grep -c "enforceMainSessionPolicy" "$REPLY" || echo "0"
+          # PERSONAL BUILD with date and link
+          echo -n "PERSONAL BUILD: "
+          if grep -q "PERSONAL BUILD" "$REPLY"; then
+            echo "✓ found"
+            # Check for date format
+            if grep -q 'buildDate\|toISOString' "$REPLY"; then
+              echo "  - date generation: ✓"
+            fi
+            if grep -q 'github.com/dddabtc' "$REPLY"; then
+              echo "  - github link: ✓"
+            fi
+          else
+            echo "✗ NOT FOUND"
+            exit 1
+          fi
           
-          echo "=== sessions_spawn in error message ==="
-          grep -c "sessions_spawn" "$REPLY" || echo "0"
+          echo -n "enforceMainSessionPolicy: "
+          grep -c "enforceMainSessionPolicy" "$REPLY" && echo "✓" || { echo "✗ NOT FOUND"; exit 1; }
           
-          echo "=== SSH block ==="
-          grep -c "isSshCommand\|SSH.*block\|ssh.*block" "$REPLY" || echo "0"
+          echo -n "sessions_spawn in error: "
+          grep -c "sessions_spawn" "$REPLY" && echo "✓" || echo "⚠ not found (may be OK)"
           
-          echo "=== Sub-agent timeout ==="
-          grep -c "21600" "$REPLY" || echo "0"
+          echo -n "SSH block: "
+          grep -c "isSshCommand\|SSH.*block\|ssh.*block" "$REPLY" && echo "✓" || echo "⚠ not found"
+          
+          echo -n "Sub-agent timeout (21600): "
+          grep -c "21600" "$REPLY" && echo "✓" || echo "⚠ not found"
+          
+          echo ""
+          echo "Feature verification complete"
