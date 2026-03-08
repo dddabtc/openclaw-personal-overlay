@@ -1,15 +1,11 @@
-From a37d4949b572593f015980d818572be14eb3f13a Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: subagent-bot <subagent-bot@example.com>
 Date: Sun, 8 Mar 2026 06:27:31 -0300
 Subject: [PATCH 8/8] feat(subagent): default runTimeoutSeconds to 6h
 
----
- src/agents/subagent-spawn.ts       | 5 ++---
- src/config/types.agent-defaults.ts | 2 +-
- 2 files changed, 3 insertions(+), 4 deletions(-)
 
 diff --git a/src/agents/subagent-spawn.ts b/src/agents/subagent-spawn.ts
-index 8f7c41866..2a346d79a 100644
+index 8f7c41866fee0b7fbe43a5cdfcdd00f6f8bc18a8..2a346d79a98591a85ef899b9c79c9231f56fd410 100644
 --- a/src/agents/subagent-spawn.ts
 +++ b/src/agents/subagent-spawn.ts
 @@ -283,13 +283,12 @@ export async function spawnSubagentDirect(
@@ -28,8 +24,21 @@ index 8f7c41866..2a346d79a 100644
    const runTimeoutSeconds =
      typeof params.runTimeoutSeconds === "number" && Number.isFinite(params.runTimeoutSeconds)
        ? Math.max(0, Math.floor(params.runTimeoutSeconds))
+diff --git a/src/auto-reply/status.ts b/src/auto-reply/status.ts
+index 51c36fdf87eb5037420b5489743ab07d3c426f01..7d559e17ecb90c829a3fc4dc39771bc827534d6f 100644
+--- a/src/auto-reply/status.ts
++++ b/src/auto-reply/status.ts
+@@ -675,7 +675,7 @@ export function buildStatusMessage(args: StatusArgs): string {
+   const mediaLine = formatMediaUnderstandingLine(args.mediaDecisions);
+   const voiceLine = formatVoiceModeLine(args.config, args.sessionEntry);
+ 
+-  const personalBuildLine = `🏷 PERSONAL BUILD · ${resolveDistPublishDateTime()}\nby: https://github.com/dddabtc`;
++  const personalBuildLine = `🏷 PERSONAL BUILD · ${resolveDistPublishDateTime()}\nhttps://github.com/dddabtc`;
+ 
+   return [
+     versionLine,
 diff --git a/src/config/types.agent-defaults.ts b/src/config/types.agent-defaults.ts
-index a242d0bbc..9acafd332 100644
+index a242d0bbcc1ed0751296acf539a79178452a1494..9acafd332848efb02c8c26032c612d6355dd9c94 100644
 --- a/src/config/types.agent-defaults.ts
 +++ b/src/config/types.agent-defaults.ts
 @@ -277,7 +277,7 @@ export type AgentDefaultsConfig = {

@@ -1,16 +1,12 @@
-From 15534ada3cf97884991bbbd8fe6b4f4312eacb3f Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: subagent-bot <subagent-bot@example.com>
 Date: Sun, 8 Mar 2026 06:27:18 -0300
 Subject: [PATCH 4/8] feat(control): fast-path /status and /stop before agent
  dispatch
 
----
- src/auto-reply/reply/dispatch-from-config.ts | 72 ++++++++++++++++++++
- src/telegram/sequential-key.ts               |  6 +-
- 2 files changed, 77 insertions(+), 1 deletion(-)
 
 diff --git a/src/auto-reply/reply/dispatch-from-config.ts b/src/auto-reply/reply/dispatch-from-config.ts
-index 786b1a7c1..8693075f2 100644
+index 786b1a7c16b52d7420e0fbec8e1942c67d1288b6..8693075f2519fc3668f728af3117275351ee08a4 100644
 --- a/src/auto-reply/reply/dispatch-from-config.ts
 +++ b/src/auto-reply/reply/dispatch-from-config.ts
 @@ -26,6 +26,7 @@ import { resolveSendPolicy } from "../../sessions/send-policy.js";
@@ -110,7 +106,7 @@ index 786b1a7c1..8693075f2 100644
      if (fastAbort.handled) {
        const payload = {
 diff --git a/src/telegram/sequential-key.ts b/src/telegram/sequential-key.ts
-index 3e787055e..6127b9756 100644
+index 3e787055e0d858741a5f46f03edc797445accca1..6127b9756c7a813e004779c563e0cb26640fb6fc 100644
 --- a/src/telegram/sequential-key.ts
 +++ b/src/telegram/sequential-key.ts
 @@ -35,7 +35,11 @@ export function getTelegramSequentialKey(ctx: TelegramSequentialKeyContext): str

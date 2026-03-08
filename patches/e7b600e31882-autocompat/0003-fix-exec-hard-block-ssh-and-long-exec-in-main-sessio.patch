@@ -1,16 +1,12 @@
-From 7f1ab4f3de2301338d923d4388480351534a0775 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: dddabtc <zhaodali78@gmail.com>
 Date: Sun, 22 Feb 2026 14:23:17 -0400
 Subject: [PATCH 3/8] fix(exec): hard-block ssh and long exec in main session
  policy
 
----
- ...ash-tools.exec.main-session-policy.test.ts | 17 +++++++++++++++++
- src/agents/bash-tools.exec.ts                 | 19 ++++++++++++++++---
- 2 files changed, 33 insertions(+), 3 deletions(-)
 
 diff --git a/src/agents/bash-tools.exec.main-session-policy.test.ts b/src/agents/bash-tools.exec.main-session-policy.test.ts
-index 567311829..7c6618c67 100644
+index 5673118291ea3350aeb3009f0157ee5c5f737923..7c6618c67cb198b507feeaad2d684cd6b3a828bc 100644
 --- a/src/agents/bash-tools.exec.main-session-policy.test.ts
 +++ b/src/agents/bash-tools.exec.main-session-policy.test.ts
 @@ -35,4 +35,21 @@ describe("exec main-session long-run guard", () => {
@@ -36,7 +32,7 @@ index 567311829..7c6618c67 100644
 +  });
  });
 diff --git a/src/agents/bash-tools.exec.ts b/src/agents/bash-tools.exec.ts
-index c2ca8a3fa..a3aca1df3 100644
+index c2ca8a3fa3049d8d56e688ef1bd17a1dc897d37a..a3aca1df35b1909cdd315d248ce7b01888199720 100644
 --- a/src/agents/bash-tools.exec.ts
 +++ b/src/agents/bash-tools.exec.ts
 @@ -165,6 +165,15 @@ function resolveMainSessionMaxExecTimeoutSec(policy?: ExecMainSessionPolicy) {

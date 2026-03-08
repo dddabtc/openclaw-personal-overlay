@@ -1,22 +1,11 @@
-From 7a05b0c9da5496468a0d214c9de7578b741b5d3a Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: dddabtc <zhaodali78@gmail.com>
 Date: Thu, 19 Feb 2026 00:26:43 -0400
 Subject: [PATCH 1/8] feat(exec): guard long exec in main sessions via policy
 
----
- src/agents/bash-tools.exec-types.ts           |   7 +
- ...ash-tools.exec.main-session-policy.test.ts |  38 +
- src/agents/bash-tools.exec.ts                 |  41 +
- src/agents/pi-tools-agent-config.test.ts      |  26 +
- src/agents/pi-tools.ts                        |  14 +
- src/config/schema.ts                          | 761 ++++++++++++++++++
- src/config/types.openclaw.ts                  |   7 +
- src/config/zod-schema.ts                      |  13 +
- 8 files changed, 907 insertions(+)
- create mode 100644 src/agents/bash-tools.exec.main-session-policy.test.ts
 
 diff --git a/src/agents/bash-tools.exec-types.ts b/src/agents/bash-tools.exec-types.ts
-index bef8ea4bf..5f62df254 100644
+index bef8ea4bff1359728a3b540fc1f7a77b112482e5..5f62df2549d3a13a49a7ea60e7b3901b15e0a2bf 100644
 --- a/src/agents/bash-tools.exec-types.ts
 +++ b/src/agents/bash-tools.exec-types.ts
 @@ -2,6 +2,12 @@ import type { ExecAsk, ExecHost, ExecSecurity } from "../infra/exec-approvals.js
@@ -42,7 +31,7 @@ index bef8ea4bf..5f62df254 100644
  export type ExecElevatedDefaults = {
 diff --git a/src/agents/bash-tools.exec.main-session-policy.test.ts b/src/agents/bash-tools.exec.main-session-policy.test.ts
 new file mode 100644
-index 000000000..567311829
+index 0000000000000000000000000000000000000000..5673118291ea3350aeb3009f0157ee5c5f737923
 --- /dev/null
 +++ b/src/agents/bash-tools.exec.main-session-policy.test.ts
 @@ -0,0 +1,38 @@
@@ -85,7 +74,7 @@ index 000000000..567311829
 +  });
 +});
 diff --git a/src/agents/bash-tools.exec.ts b/src/agents/bash-tools.exec.ts
-index 8a0bd3090..c2ca8a3fa 100644
+index 8a0bd30907ae9b4b3e606927e1068fbe110efb3c..c2ca8a3fa3049d8d56e688ef1bd17a1dc897d37a 100644
 --- a/src/agents/bash-tools.exec.ts
 +++ b/src/agents/bash-tools.exec.ts
 @@ -31,6 +31,7 @@ import {
@@ -158,7 +147,7 @@ index 8a0bd3090..c2ca8a3fa 100644
        const pendingMaxOutput = DEFAULT_PENDING_MAX_OUTPUT;
        const warnings: string[] = [];
 diff --git a/src/agents/pi-tools-agent-config.test.ts b/src/agents/pi-tools-agent-config.test.ts
-index e24186e0b..1870488b0 100644
+index e24186e0b3044e4f766a061e530539c7c9fa61a3..1870488b02d0d2c55c34a804ed64cbda927d6f9b 100644
 --- a/src/agents/pi-tools-agent-config.test.ts
 +++ b/src/agents/pi-tools-agent-config.test.ts
 @@ -746,4 +746,30 @@ describe("Agent-specific tool filtering", () => {
@@ -193,7 +182,7 @@ index e24186e0b..1870488b0 100644
 +  });
  });
 diff --git a/src/agents/pi-tools.ts b/src/agents/pi-tools.ts
-index 543a163ab..b85798a92 100644
+index 543a163ab0c505e68b11fa55af434a498483a6bc..b85798a9297deb9a16fea14e914aab393486fc34 100644
 --- a/src/agents/pi-tools.ts
 +++ b/src/agents/pi-tools.ts
 @@ -182,6 +182,19 @@ export function resolveToolLoopDetectionConfig(params: {
@@ -225,7 +214,7 @@ index 543a163ab..b85798a92 100644
        ? {
            containerName: sandbox.containerName,
 diff --git a/src/config/schema.ts b/src/config/schema.ts
-index 83227a375..a445c9508 100644
+index 83227a375d5821f09454e99a6bcc799dba4ea3f1..a445c950894e86bf8cc749432b23715b85d24a58 100644
 --- a/src/config/schema.ts
 +++ b/src/config/schema.ts
 @@ -12,6 +12,767 @@ export type ConfigSchema = ReturnType<typeof OpenClawSchema.toJSONSchema>;
@@ -997,7 +986,7 @@ index 83227a375..a445c9508 100644
    type?: string | string[];
    properties?: Record<string, JsonSchemaObject>;
 diff --git a/src/config/types.openclaw.ts b/src/config/types.openclaw.ts
-index 3d1f0a900..38efa88a9 100644
+index 3d1f0a9008074c57227220f44416ce00a81c89b7..38efa88a98a2ed9870f6069421df2d6737547251 100644
 --- a/src/config/types.openclaw.ts
 +++ b/src/config/types.openclaw.ts
 @@ -120,6 +120,13 @@ export type OpenClawConfig = {
@@ -1015,7 +1004,7 @@ index 3d1f0a900..38efa88a9 100644
  
  export type ConfigValidationIssue = {
 diff --git a/src/config/zod-schema.ts b/src/config/zod-schema.ts
-index 5148704a1..7a541674c 100644
+index 5148704a1ac1444ad56e0302cd43a1166ca98010..7a541674ccf6364b31de7587e08405c5f3b874f2 100644
 --- a/src/config/zod-schema.ts
 +++ b/src/config/zod-schema.ts
 @@ -436,6 +436,19 @@ export const OpenClawSchema = z

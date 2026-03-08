@@ -1,16 +1,12 @@
-From 66f31c690a809daa1e6b21659388043a19eb29c9 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: zhaod <zhaod@local>
 Date: Fri, 20 Feb 2026 13:03:55 -0400
 Subject: [PATCH 2/8] scripts: add install-personal helper for 113 deploy
 
----
- scripts/install-personal.sh | 32 ++++++++++++++++++++++++++++++++
- 1 file changed, 32 insertions(+)
- create mode 100755 scripts/install-personal.sh
 
 diff --git a/scripts/install-personal.sh b/scripts/install-personal.sh
 new file mode 100755
-index 000000000..01bbd5520
+index 0000000000000000000000000000000000000000..01bbd5520156499b3003d5303cda9f90fd5c6ca7
 --- /dev/null
 +++ b/scripts/install-personal.sh
 @@ -0,0 +1,32 @@

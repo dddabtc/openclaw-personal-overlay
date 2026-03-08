@@ -1,18 +1,11 @@
-From a7750f71776ea4895e2bed252b7432910c004ba5 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: subagent-bot <subagent-bot@example.com>
 Date: Sun, 8 Mar 2026 06:27:28 -0300
 Subject: [PATCH 7/8] feat(exec): add session maxOutputBytes policy
 
----
- src/agents/bash-tools.exec-types.ts | 11 ++++++
- src/agents/bash-tools.exec.ts       | 58 ++++++++++++++++++++++++++++-
- src/agents/pi-tools.ts              |  3 ++
- src/config/types.openclaw.ts        |  4 ++
- src/config/zod-schema.ts            |  7 ++++
- 5 files changed, 81 insertions(+), 2 deletions(-)
 
 diff --git a/src/agents/bash-tools.exec-types.ts b/src/agents/bash-tools.exec-types.ts
-index 5f62df254..f0ded01ff 100644
+index 5f62df2549d3a13a49a7ea60e7b3901b15e0a2bf..f0ded01ffaadc442b57160e733f6825c24a7b490 100644
 --- a/src/agents/bash-tools.exec-types.ts
 +++ b/src/agents/bash-tools.exec-types.ts
 @@ -6,6 +6,16 @@ export type ExecMainSessionPolicy = {
@@ -41,7 +34,7 @@ index 5f62df254..f0ded01ff 100644
  
  export type ExecElevatedDefaults = {
 diff --git a/src/agents/bash-tools.exec.ts b/src/agents/bash-tools.exec.ts
-index a3aca1df3..af3f3e827 100644
+index a3aca1df35b1909cdd315d248ce7b01888199720..af3f3e82780b3449b0c136415996bd1064efc61e 100644
 --- a/src/agents/bash-tools.exec.ts
 +++ b/src/agents/bash-tools.exec.ts
 @@ -32,6 +32,7 @@ import {
@@ -148,7 +141,7 @@ index a3aca1df3..af3f3e827 100644
                },
              });
 diff --git a/src/agents/pi-tools.ts b/src/agents/pi-tools.ts
-index b85798a92..61d9a4dbb 100644
+index b85798a9297deb9a16fea14e914aab393486fc34..61d9a4dbb48f6836ed9c683a011f98e8256af2f2 100644
 --- a/src/agents/pi-tools.ts
 +++ b/src/agents/pi-tools.ts
 @@ -155,6 +155,8 @@ function resolveExecConfig(params: { cfg?: OpenClawConfig; agentId?: string }) {
@@ -169,7 +162,7 @@ index b85798a92..61d9a4dbb 100644
        ? {
            containerName: sandbox.containerName,
 diff --git a/src/config/types.openclaw.ts b/src/config/types.openclaw.ts
-index 38efa88a9..b846c545d 100644
+index 38efa88a98a2ed9870f6069421df2d6737547251..b846c545dbc35c31e415dc051eed02504f932ae4 100644
 --- a/src/config/types.openclaw.ts
 +++ b/src/config/types.openclaw.ts
 @@ -125,6 +125,10 @@ export type OpenClawConfig = {
@@ -184,7 +177,7 @@ index 38efa88a9..b846c545d 100644
    };
  };
 diff --git a/src/config/zod-schema.ts b/src/config/zod-schema.ts
-index 7a541674c..5803d160f 100644
+index 7a541674ccf6364b31de7587e08405c5f3b874f2..5803d160f2e281498c644033b944391626bc1d46 100644
 --- a/src/config/zod-schema.ts
 +++ b/src/config/zod-schema.ts
 @@ -443,6 +443,13 @@ export const OpenClawSchema = z
