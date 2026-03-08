@@ -44,20 +44,19 @@ jobs:
           print('metadata OK')
           "
 
-      - name: Validate full-replace structure
+      - name: Validate overlay structure
         run: |
           DIST=/tmp/overlay-extract/payload/dist
           echo "Files in dist: $(find $DIST -type f | wc -l)"
 
-          # entry.js is excluded by build-dist-overlay.sh (EXCLUDE_DIST_FILES_REGEX)
-          # so we only check for the patched runtime files
+          # Delta overlays only include changed chunks — entry.js, run-main, build-info
+          # are excluded or unchanged. Validate the chunks that must be present:
 
-          ls $DIST/run-main*.js >/dev/null 2>&1 || { echo "FAIL: run-main-*.js missing"; exit 1; }
-          echo "run-main: OK"
-
+          # index.js must be present (changed to update chunk references)
           test -f "$DIST/index.js" || { echo "FAIL: index.js missing"; exit 1; }
           echo "index.js: OK"
 
+          # At least one reply-*.js chunk must be present (contains exec guard + SSH block)
           ls $DIST/reply-*.js >/dev/null 2>&1 || { echo "FAIL: reply-*.js missing"; exit 1; }
           echo "reply chunk: OK"
 
