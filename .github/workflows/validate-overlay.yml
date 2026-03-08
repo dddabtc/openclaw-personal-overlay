@@ -16,7 +16,13 @@ jobs:
 
       - name: Download release artifact
         run: |
-          gh release download overlay-v2026.3.7 -R dddabtc/openclaw-personal-overlay -p 'dist-overlay.tar.gz' -D /tmp/release-assets/ || { echo "No release found, skipping"; exit 0; }
+          LATEST=$(gh release list -R dddabtc/openclaw-personal-overlay -L 1 --json tagName -q '.[0].tagName')
+          echo "Latest release: $LATEST"
+          if [ -z "$LATEST" ]; then
+            echo "FAIL: No release found in dddabtc/openclaw-personal-overlay"
+            exit 1
+          fi
+          gh release download "$LATEST" -R dddabtc/openclaw-personal-overlay -p 'dist-overlay.tar.gz' -D /tmp/release-assets/ || { echo "FAIL: Could not download dist-overlay.tar.gz from release $LATEST"; exit 1; }
 
       - name: Extract overlay
         run: |
@@ -173,7 +179,7 @@ jobs:
           echo "========================================"
           echo "=== Overlay Validation Summary       ==="
           echo "========================================"
-          echo "Release: overlay-v2026.3.7"
+          echo "Release: latest"
           echo "Mode: full-replace"
           echo ""
           echo "Feature 1: PERSONAL BUILD tag    ✓"
