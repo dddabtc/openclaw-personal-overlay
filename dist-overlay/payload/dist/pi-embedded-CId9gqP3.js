@@ -22390,7 +22390,7 @@ function buildStatusMessage(args) {
 	const fallbackLine = fallbackState.active ? `↪️ Fallback: ${activeModelLabel}${showFallbackAuth ? ` · 🔑 ${activeAuthLabelValue}` : ""} (${fallbackState.reason ?? "selected model unavailable"})` : null;
 	const commit = resolveCommitHash();
 	const versionLine = `🦞 OpenClaw ${VERSION}${commit ? ` (${commit})` : ""}`;
-	const personalLine = `🏷 PERSONAL BUILD · ${resolveDistPublishDateTime()}\nby: https://github.com/dddabtc`;
+	const personalLine = `🏷 PERSONAL BUILD · ${resolveDistPublishDateTime()}\nhttps://github.com/dddabtc`;
 	const usagePair = formatUsagePair(inputTokens, outputTokens);
 	const cacheLine = formatCacheLine(inputTokens, cacheRead, cacheWrite);
 	const costLine = costLabel ? `💵 Cost: ${costLabel}` : null;
