@@ -176,7 +176,12 @@ jobs:
             exit 0
           fi
           git commit -m "chore(release): update changelog for ${{ steps.normalize.outputs.release_tag }}"
-          git push origin HEAD:${{ github.ref_name }}
+          # Only push if ref is a branch; tag refs will conflict
+          if [[ "${{ github.ref }}" == refs/heads/* ]]; then
+            git push origin HEAD:${{ github.ref_name }}
+          else
+            echo "Ref is not a branch (${{ github.ref }}), skipping push"
+          fi
 
       - uses: actions/setup-node@v4
         with:
