@@ -32,7 +32,7 @@ The current patch set focuses on stability and responsiveness:
 | **Abortable retry** | Makes transient retry delays interruptible |
 | **Sub-agent timeout** | Extends default sub-agent session timeout to 6 hours (upstream default is too short for complex tasks) |
 
-## Quick start
+## Installation
 
 ```bash
 # Check compatibility
