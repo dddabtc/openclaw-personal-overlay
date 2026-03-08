@@ -1,0 +1,56 @@
+From 924cad05fa3900545a3a010d1d8982ac316a7ac4 Mon Sep 17 00:00:00 2001
+From: subagent-bot <subagent-bot@example.com>
+Date: Sun, 8 Mar 2026 08:15:25 -0300
+Subject: [PATCH 4/4] feat(exec): add output cap for main session policy
+
+PERSONAL BUILD: Add maxOutputBytes field to ExecMainSessionPolicy.
+When configured, limits exec output in main session to prevent
+runaway output from consuming context window.
+---
+ src/agents/bash-tools.exec-types.ts |  2 ++
+ src/agents/bash-tools.exec.ts       | 16 ++++++++++++++--
+ 2 files changed, 16 insertions(+), 2 deletions(-)
+
+diff --git a/src/agents/bash-tools.exec-types.ts b/src/agents/bash-tools.exec-types.ts
+index d2c976c3a..6e638530a 100644
+--- a/src/agents/bash-tools.exec-types.ts
++++ b/src/agents/bash-tools.exec-types.ts
+@@ -15,6 +15,8 @@ export type ExecMainSessionPolicy = {
+   maxExecTimeoutSec?: number;
+   /** Block SSH-related commands (ssh, scp, sftp, rsync over ssh). */
+   blockSshCommands?: boolean;
++  /** Maximum output bytes for main session (default: 50KB = 51200). */
++  maxOutputBytes?: number;
+ };
+ 
+ export type ExecToolDefaults = {
+diff --git a/src/agents/bash-tools.exec.ts b/src/agents/bash-tools.exec.ts
+index 0c9118c42..0420f005b 100644
+--- a/src/agents/bash-tools.exec.ts
++++ b/src/agents/bash-tools.exec.ts
+@@ -336,8 +336,20 @@ export function createExecTool(
+         yieldMs: params.yieldMs,
+       });
+ 
+-      const maxOutput = DEFAULT_MAX_OUTPUT;
+-      const pendingMaxOutput = DEFAULT_PENDING_MAX_OUTPUT;
++      // PERSONAL BUILD: Apply output cap from main session policy
++      const policyMaxOutput = defaults?.mainSessionPolicy?.maxOutputBytes;
++      const mainSessionOutputCap =
++        isMainAgentSession(defaults?.sessionKey) &&
++        typeof policyMaxOutput === "number" &&
++        policyMaxOutput > 0
++          ? policyMaxOutput
++          : undefined;
++      const maxOutput = mainSessionOutputCap
++        ? Math.min(DEFAULT_MAX_OUTPUT, mainSessionOutputCap)
++        : DEFAULT_MAX_OUTPUT;
++      const pendingMaxOutput = mainSessionOutputCap
++        ? Math.min(DEFAULT_PENDING_MAX_OUTPUT, mainSessionOutputCap)
++        : DEFAULT_PENDING_MAX_OUTPUT;
+       const warnings: string[] = [];
+       let execCommandOverride: string | undefined;
+       const backgroundRequested = params.background === true;
+-- 
+2.25.1
+
