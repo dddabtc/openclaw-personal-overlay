@@ -1,4 +1,4 @@
-From eaa10cf61a71bb51316d83d9e0f531de3cb6cdd5 Mon Sep 17 00:00:00 2001
+From 9371986d8e97ef38d1e0ceb1abf73d08ac814981 Mon Sep 17 00:00:00 2001
 From: subagent-bot <subagent-bot@example.com>
 Date: Sun, 8 Mar 2026 06:27:28 -0300
 Subject: [PATCH 7/8] feat(exec): add session maxOutputBytes policy
@@ -7,9 +7,10 @@ Subject: [PATCH 7/8] feat(exec): add session maxOutputBytes policy
  src/agents/bash-tools.exec-types.ts | 11 ++++++
  src/agents/bash-tools.exec.ts       | 58 ++++++++++++++++++++++++++++-
  src/agents/pi-tools.ts              |  3 ++
+ src/config/schema.ts                | 25 -------------
  src/config/types.openclaw.ts        |  4 ++
  src/config/zod-schema.ts            |  7 ++++
- 5 files changed, 81 insertions(+), 2 deletions(-)
+ 6 files changed, 81 insertions(+), 27 deletions(-)
 
 diff --git a/src/agents/bash-tools.exec-types.ts b/src/agents/bash-tools.exec-types.ts
 index 5f62df254..f0ded01ff 100644
@@ -148,7 +149,7 @@ index a3aca1df3..af3f3e827 100644
                },
              });
 diff --git a/src/agents/pi-tools.ts b/src/agents/pi-tools.ts
-index b85798a92..61d9a4dbb 100644
+index 4c365df80..49e6a6299 100644
 --- a/src/agents/pi-tools.ts
 +++ b/src/agents/pi-tools.ts
 @@ -155,6 +155,8 @@ function resolveExecConfig(params: { cfg?: OpenClawConfig; agentId?: string }) {
@@ -160,7 +161,7 @@ index b85798a92..61d9a4dbb 100644
    };
  }
  
-@@ -431,6 +433,7 @@ export function createOpenClawCodingTools(options?: {
+@@ -418,6 +420,7 @@ export function createOpenClawCodingTools(options?: {
      notifyOnExitEmptySuccess:
        options?.exec?.notifyOnExitEmptySuccess ?? execConfig.notifyOnExitEmptySuccess,
      mainSessionPolicy: options?.exec?.mainSessionPolicy ?? execConfig.mainSessionPolicy,
@@ -168,6 +169,42 @@ index b85798a92..61d9a4dbb 100644
      sandbox: sandbox
        ? {
            containerName: sandbox.containerName,
+diff --git a/src/config/schema.ts b/src/config/schema.ts
+index a445c9508..0bce1698c 100644
+--- a/src/config/schema.ts
++++ b/src/config/schema.ts
+@@ -12,31 +12,6 @@ export type ConfigSchema = ReturnType<typeof OpenClawSchema.toJSONSchema>;
+ 
+ type JsonSchemaNode = Record<string, unknown>;
+ 
+-export type ConfigSchemaResponse = {
+-  schema: ConfigSchema;
+-  uiHints: ConfigUiHints;
+-  version: string;
+-  generatedAt: string;
+-};
+-
+-export type PluginUiMetadata = {
+-  id: string;
+-  name?: string;
+-  description?: string;
+-  configUiHints?: Record<
+-    string,
+-    Pick<ConfigUiHint, "label" | "help" | "advanced" | "sensitive" | "placeholder">
+-  >;
+-  configSchema?: JsonSchemaNode;
+-};
+-
+-export type ChannelUiMetadata = {
+-  id: string;
+-  label?: string;
+-  description?: string;
+-  configSchema?: JsonSchemaNode;
+-  configUiHints?: Record<string, ConfigUiHint>;
+-};
+ 
+ const GROUP_LABELS: Record<string, string> = {
+   wizard: "Wizard",
 diff --git a/src/config/types.openclaw.ts b/src/config/types.openclaw.ts
 index 38efa88a9..b846c545d 100644
 --- a/src/config/types.openclaw.ts

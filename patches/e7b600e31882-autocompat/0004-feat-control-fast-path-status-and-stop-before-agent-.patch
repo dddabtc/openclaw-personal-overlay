@@ -1,16 +1,16 @@
-From 15534ada3cf97884991bbbd8fe6b4f4312eacb3f Mon Sep 17 00:00:00 2001
+From 4b805765ad0bccd57a526c87d424bd82e730cd00 Mon Sep 17 00:00:00 2001
 From: subagent-bot <subagent-bot@example.com>
 Date: Sun, 8 Mar 2026 06:27:18 -0300
 Subject: [PATCH 4/8] feat(control): fast-path /status and /stop before agent
  dispatch
 
 ---
- src/auto-reply/reply/dispatch-from-config.ts | 72 ++++++++++++++++++++
+ src/auto-reply/reply/dispatch-from-config.ts | 80 ++++++++++++++++++++
  src/telegram/sequential-key.ts               |  6 +-
- 2 files changed, 77 insertions(+), 1 deletion(-)
+ 2 files changed, 85 insertions(+), 1 deletion(-)
 
 diff --git a/src/auto-reply/reply/dispatch-from-config.ts b/src/auto-reply/reply/dispatch-from-config.ts
-index 786b1a7c1..8693075f2 100644
+index 786b1a7c1..5ff484475 100644
 --- a/src/auto-reply/reply/dispatch-from-config.ts
 +++ b/src/auto-reply/reply/dispatch-from-config.ts
 @@ -26,6 +26,7 @@ import { resolveSendPolicy } from "../../sessions/send-policy.js";
@@ -48,7 +48,7 @@ index 786b1a7c1..8693075f2 100644
  const resolveSessionStoreLookup = (
    ctx: FinalizedMsgContext,
    cfg: OpenClawConfig,
-@@ -271,9 +292,60 @@ export async function dispatchReplyFromConfig(params: {
+@@ -271,9 +292,68 @@ export async function dispatchReplyFromConfig(params: {
      }
    };
  
@@ -62,13 +62,21 @@ index 786b1a7c1..8693075f2 100644
 +      const entry = sessionStoreEntry.entry;
 +      const selectedProvider = entry?.providerOverride ?? entry?.modelProvider ?? "unknown";
 +      const selectedModel = entry?.modelOverride ?? entry?.model ?? "unknown";
-+      const contextTokens = entry?.contextTokens ?? cfg.agents?.defaults?.contextTokens;
++      const agentDefaults =
++        cfg.agents?.defaults && typeof cfg.agents.defaults === "object"
++          ? cfg.agents.defaults
++          : undefined;
++      const defaultModel =
++        agentDefaults?.model && typeof agentDefaults.model === "object"
++          ? agentDefaults.model
++          : undefined;
++      const contextTokens = entry?.contextTokens ?? agentDefaults?.contextTokens;
 +      const statusText = buildStatusMessage({
 +        config: cfg,
 +        agent: {
-+          ...(cfg.agents?.defaults ?? {}),
++          ...(agentDefaults ?? {}),
 +          model: {
-+            ...(cfg.agents?.defaults?.model ?? {}),
++            ...(defaultModel ?? {}),
 +            primary: `${selectedProvider}/${selectedModel}`,
 +          },
 +          contextTokens,

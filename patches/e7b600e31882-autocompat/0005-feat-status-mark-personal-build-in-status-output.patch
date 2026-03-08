@@ -1,4 +1,4 @@
-From 458c58e57411cd32fc8731ce1631aac27c37c117 Mon Sep 17 00:00:00 2001
+From 9ecbe8fcf600fcd985c5c88b4dd9fb9c55375094 Mon Sep 17 00:00:00 2001
 From: subagent-bot <subagent-bot@example.com>
 Date: Sun, 8 Mar 2026 06:27:22 -0300
 Subject: [PATCH 5/8] feat(status): mark personal build in status output

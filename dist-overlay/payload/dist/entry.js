@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import process$1 from "node:process";
+import { fileURLToPath } from "node:url";
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
@@ -162,7 +163,7 @@ const HELP_FLAGS = new Set(["-h", "--help"]);
 const VERSION_FLAGS = new Set(["-V", "--version"]);
 const ROOT_VERSION_ALIAS_FLAG = "-v";
 const ROOT_BOOLEAN_FLAGS = new Set(["--dev", "--no-color"]);
-const ROOT_VALUE_FLAGS = new Set(["--profile"]);
+const ROOT_VALUE_FLAGS = new Set(["--profile", "--log-level"]);
 const FLAG_TERMINATOR = "--";
 function hasHelpOrVersion(argv) {
 	return argv.some((arg) => HELP_FLAGS.has(arg) || VERSION_FLAGS.has(arg)) || hasRootVersionAlias(argv);
@@ -342,6 +343,7 @@ function normalizeWindowsArgv(argv) {
 //#region src/hooks/internal-hooks.ts
 /** Registry of hook handlers by event key */
 const handlers = /* @__PURE__ */ new Map();
+const log$1 = createSubsystemLogger("internal-hooks");
 /**
 * Register a hook handler for a specific event type or event:action combination
 *
@@ -391,7 +393,8 @@ async function triggerInternalHook(event) {
 	for (const handler of allHandlers) try {
 		await handler(event);
 	} catch (err) {
-		console.error(`Hook error [${event.type}:${event.action}]:`, err instanceof Error ? err.message : String(err));
+		const message = err instanceof Error ? err.message : String(err);
+		log$1.error(`Hook error [${event.type}:${event.action}]: ${message}`);
 	}
 }
 /**
@@ -604,6 +607,7 @@ function resolveGatewayPort(cfg, env = process.env) {
 //#endregion
 //#region src/infra/tmp-openclaw-dir.ts
 const POSIX_OPENCLAW_TMP_DIR = "/tmp/openclaw";
+const TMP_DIR_ACCESS_MODE = fs.constants.W_OK | fs.constants.X_OK;
 function isNodeErrorWithCode(err, code) {
 	return typeof err === "object" && err !== null && "code" in err && err.code === code;
 }
@@ -631,31 +635,48 @@ function resolvePreferredOpenClawTmpDir(options = {}) {
 		const suffix = uid === void 0 ? "openclaw" : `openclaw-${uid}`;
 		return path.join(base, suffix);
 	};
+	const isTrustedTmpDir = (st) => {
+		return st.isDirectory() && !st.isSymbolicLink() && isSecureDirForUser(st);
+	};
+	const resolveDirState = (candidatePath) => {
+		try {
+			if (!isTrustedTmpDir(lstatSync(candidatePath))) return "invalid";
+			accessSync(candidatePath, TMP_DIR_ACCESS_MODE);
+			return "available";
+		} catch (err) {
+			if (isNodeErrorWithCode(err, "ENOENT")) return "missing";
+			return "invalid";
+		}
+	};
+	const ensureTrustedFallbackDir = () => {
+		const fallbackPath = fallback();
+		const state = resolveDirState(fallbackPath);
+		if (state === "available") return fallbackPath;
+		if (state === "invalid") throw new Error(`Unsafe fallback OpenClaw temp dir: ${fallbackPath}`);
+		try {
+			mkdirSync(fallbackPath, {
+				recursive: true,
+				mode: 448
+			});
+		} catch {
+			throw new Error(`Unable to create fallback OpenClaw temp dir: ${fallbackPath}`);
+		}
+		if (resolveDirState(fallbackPath) !== "available") throw new Error(`Unsafe fallback OpenClaw temp dir: ${fallbackPath}`);
+		return fallbackPath;
+	};
+	const existingPreferredState = resolveDirState(POSIX_OPENCLAW_TMP_DIR);
+	if (existingPreferredState === "available") return POSIX_OPENCLAW_TMP_DIR;
+	if (existingPreferredState === "invalid") return ensureTrustedFallbackDir();
 	try {
-		const preferred = lstatSync(POSIX_OPENCLAW_TMP_DIR);
-		if (!preferred.isDirectory() || preferred.isSymbolicLink()) return fallback();
-		accessSync(POSIX_OPENCLAW_TMP_DIR, fs.constants.W_OK | fs.constants.X_OK);
-		if (!isSecureDirForUser(preferred)) return fallback();
-		return POSIX_OPENCLAW_TMP_DIR;
-	} catch (err) {
-		if (!isNodeErrorWithCode(err, "ENOENT")) return fallback();
-	}
-	try {
-		accessSync("/tmp", fs.constants.W_OK | fs.constants.X_OK);
+		accessSync("/tmp", TMP_DIR_ACCESS_MODE);
 		mkdirSync(POSIX_OPENCLAW_TMP_DIR, {
 			recursive: true,
 			mode: 448
 		});
-		try {
-			const preferred = lstatSync(POSIX_OPENCLAW_TMP_DIR);
-			if (!preferred.isDirectory() || preferred.isSymbolicLink()) return fallback();
-			if (!isSecureDirForUser(preferred)) return fallback();
-		} catch {
-			return fallback();
-		}
+		if (resolveDirState(POSIX_OPENCLAW_TMP_DIR) !== "available") return ensureTrustedFallbackDir();
 		return POSIX_OPENCLAW_TMP_DIR;
 	} catch {
-		return fallback();
+		return ensureTrustedFallbackDir();
 	}
 }
 
@@ -685,9 +706,13 @@ const ALLOWED_LOG_LEVELS = [
 	"debug",
 	"trace"
 ];
+function tryParseLogLevel(level) {
+	if (typeof level !== "string") return;
+	const candidate = level.trim();
+	return ALLOWED_LOG_LEVELS.includes(candidate) ? candidate : void 0;
+}
 function normalizeLogLevel(level, fallback = "info") {
-	const candidate = (level ?? fallback).trim();
-	return ALLOWED_LOG_LEVELS.includes(candidate) ? candidate : fallback;
+	return tryParseLogLevel(level) ?? fallback;
 }
 function levelToMinLevel(level) {
 	return {
@@ -708,6 +733,7 @@ const loggingState = {
 	cachedSettings: null,
 	cachedConsoleSettings: null,
 	overrideSettings: null,
+	invalidEnvLogLevelValue: null,
 	consolePatched: false,
 	forceConsoleToStderr: false,
 	consoleTimestampPrefix: false,
@@ -718,23 +744,48 @@ const loggingState = {
 };
 
 //#endregion
+//#region src/logging/env-log-level.ts
+function resolveEnvLogLevelOverride() {
+	const raw = process.env.OPENCLAW_LOG_LEVEL;
+	const trimmed = typeof raw === "string" ? raw.trim() : "";
+	if (!trimmed) {
+		loggingState.invalidEnvLogLevelValue = null;
+		return;
+	}
+	const parsed = tryParseLogLevel(trimmed);
+	if (parsed) {
+		loggingState.invalidEnvLogLevelValue = null;
+		return parsed;
+	}
+	if (loggingState.invalidEnvLogLevelValue !== trimmed) {
+		loggingState.invalidEnvLogLevelValue = trimmed;
+		process.stderr.write(`[openclaw] Ignoring invalid OPENCLAW_LOG_LEVEL="${trimmed}" (allowed: ${ALLOWED_LOG_LEVELS.join("|")}).\n`);
+	}
+}
+
+//#endregion
+//#region src/logging/node-require.ts
+function resolveNodeRequireFromMeta(metaUrl) {
+	const getBuiltinModule = process.getBuiltinModule;
+	if (typeof getBuiltinModule !== "function") return null;
+	try {
+		const moduleNamespace = getBuiltinModule("module");
+		const createRequire = typeof moduleNamespace.createRequire === "function" ? moduleNamespace.createRequire : null;
+		return createRequire ? createRequire(metaUrl) : null;
+	} catch {
+		return null;
+	}
+}
+
+//#endregion
 //#region src/logging/logger.ts
 const DEFAULT_LOG_DIR = resolvePreferredOpenClawTmpDir();
 const DEFAULT_LOG_FILE = path.join(DEFAULT_LOG_DIR, "openclaw.log");
 const LOG_PREFIX = "openclaw";
 const LOG_SUFFIX = ".log";
 const MAX_LOG_AGE_MS = 1440 * 60 * 1e3;
-function resolveNodeRequire$1() {
-	const getBuiltinModule = process.getBuiltinModule;
-	if (typeof getBuiltinModule !== "function") return null;
-	try {
-		const moduleNamespace = getBuiltinModule("module");
-		return typeof moduleNamespace.createRequire === "function" ? moduleNamespace.createRequire : null;
-	} catch {
-		return null;
-	}
-}
-const requireConfig$1 = resolveNodeRequire$1()?.(import.meta.url) ?? null;
+const DEFAULT_MAX_LOG_FILE_BYTES = 500 * 1024 * 1024;
+const requireConfig$1 = resolveNodeRequireFromMeta(import.meta.url);
 const externalTransports = /* @__PURE__ */ new Set();
 function attachExternalTransport(logger, transport) {
 	logger.attachTransport((logObj) => {
@@ -752,14 +803,16 @@ function resolveSettings() {
 		cfg = void 0;
 	}
 	const defaultLevel = process.env.VITEST === "true" && process.env.OPENCLAW_TEST_FILE_LOG !== "1" ? "silent" : "info";
+	const fromConfig = normalizeLogLevel(cfg?.level, defaultLevel);
 	return {
-		level: normalizeLogLevel(cfg?.level, defaultLevel),
-		file: cfg?.file ?? defaultRollingPathForToday()
+		level: resolveEnvLogLevelOverride() ?? fromConfig,
+		file: cfg?.file ?? defaultRollingPathForToday(),
+		maxFileBytes: resolveMaxLogFileBytes(cfg?.maxFileBytes)
 	};
 }
 function settingsChanged(a, b) {
 	if (!a) return true;
-	return a.level !== b.level || a.file !== b.file;
+	return a.level !== b.level || a.file !== b.file || a.maxFileBytes !== b.maxFileBytes;
 }
 function isFileLogLevelEnabled(level) {
 	const settings = loggingState.cachedSettings ?? resolveSettings();
@@ -770,6 +823,8 @@ function isFileLogLevelEnabled(level) {
 function buildLogger(settings) {
 	fs.mkdirSync(path.dirname(settings.file), { recursive: true });
 	if (isRollingPath(settings.file)) pruneOldRollingLogs(path.dirname(settings.file));
+	let currentFileBytes = getCurrentLogFileBytes(settings.file);
+	let warnedAboutSizeCap = false;
 	const logger = new Logger({
 		name: "openclaw",
 		minLevel: levelToMinLevel(settings.level),
@@ -778,15 +833,50 @@ function buildLogger(settings) {
 	logger.attachTransport((logObj) => {
 		try {
 			const time = logObj.date?.toISOString?.() ?? (/* @__PURE__ */ new Date()).toISOString();
-			const line = JSON.stringify({
+			const payload = `${JSON.stringify({
 				...logObj,
 				time
-			});
-			fs.appendFileSync(settings.file, `${line}\n`, { encoding: "utf8" });
+			})}\n`;
+			const payloadBytes = Buffer.byteLength(payload, "utf8");
+			const nextBytes = currentFileBytes + payloadBytes;
+			if (nextBytes > settings.maxFileBytes) {
+				if (!warnedAboutSizeCap) {
+					warnedAboutSizeCap = true;
+					const warningLine = JSON.stringify({
+						time: (/* @__PURE__ */ new Date()).toISOString(),
+						level: "warn",
+						subsystem: "logging",
+						message: `log file size cap reached; suppressing writes file=${settings.file} maxFileBytes=${settings.maxFileBytes}`
+					});
+					appendLogLine(settings.file, `${warningLine}\n`);
+					process.stderr.write(`[openclaw] log file size cap reached; suppressing writes file=${settings.file} maxFileBytes=${settings.maxFileBytes}\n`);
+				}
+				return;
+			}
+			if (appendLogLine(settings.file, payload)) currentFileBytes = nextBytes;
 		} catch {}
 	});
 	for (const transport of externalTransports) attachExternalTransport(logger, transport);
 	return logger;
+}
+function resolveMaxLogFileBytes(raw) {
+	if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return Math.floor(raw);
+	return DEFAULT_MAX_LOG_FILE_BYTES;
+}
+function getCurrentLogFileBytes(file) {
+	try {
+		return fs.statSync(file).size;
+	} catch {
+		return 0;
+	}
+}
+function appendLogLine(file, line) {
+	try {
+		fs.appendFileSync(file, line, { encoding: "utf8" });
+		return true;
+	} catch {
+		return false;
+	}
 }
 function getLogger() {
 	const settings = resolveSettings();
@@ -1086,6 +1176,7 @@ function truncateUtf16Safe(input, maxLen) {
 	return sliceUtf16Safe(input, 0, limit);
 }
 function resolveUserPath(input) {
+	if (!input) return "";
 	const trimmed = input.trim();
 	if (!trimmed) return trimmed;
 	if (trimmed.startsWith("~")) {
@@ -1671,6 +1762,9 @@ function requireActivePluginRegistry() {
 	if (!state.registry) state.registry = createEmptyPluginRegistry();
 	return state.registry;
 }
+function getActivePluginRegistryKey() {
+	return state.key;
+}
 
 //#endregion
 //#region src/channels/registry.ts
@@ -1685,7 +1779,6 @@ const CHAT_CHANNEL_ORDER = [
 	"imessage"
 ];
 const CHANNEL_IDS = [...CHAT_CHANNEL_ORDER];
-const DEFAULT_CHAT_CHANNEL = "whatsapp";
 const CHAT_CHANNEL_META = {
 	telegram: {
 		id: "telegram",
@@ -1937,17 +2030,7 @@ function formatLocalIsoWithOffset(now) {
 
 //#endregion
 //#region src/logging/console.ts
-function resolveNodeRequire() {
-	const getBuiltinModule = process.getBuiltinModule;
-	if (typeof getBuiltinModule !== "function") return null;
-	try {
-		const moduleNamespace = getBuiltinModule("module");
-		return typeof moduleNamespace.createRequire === "function" ? moduleNamespace.createRequire : null;
-	} catch {
-		return null;
-	}
-}
-const requireConfig = resolveNodeRequire()?.(import.meta.url) ?? null;
+const requireConfig = resolveNodeRequireFromMeta(import.meta.url);
 const loadConfigFallbackDefault = () => {
 	try {
 		return (requireConfig?.("../config/config.js"))?.loadConfig?.().logging;
@@ -1978,7 +2061,7 @@ function resolveConsoleSettings() {
 		}
 	}
 	return {
-		level: normalizeConsoleLevel(cfg?.consoleLevel),
+		level: resolveEnvLogLevelOverride() ?? normalizeConsoleLevel(cfg?.consoleLevel),
 		style: normalizeConsoleStyle(cfg?.consoleStyle)
 	};
 }
@@ -2372,6 +2455,32 @@ function normalizeEnv() {
 }
 
 //#endregion
+//#region src/infra/is-main.ts
+function normalizePathCandidate(candidate, cwd) {
+	if (!candidate) return;
+	const resolved = path.resolve(cwd, candidate);
+	try {
+		return fs.realpathSync.native(resolved);
+	} catch {
+		return resolved;
+	}
+}
+function isMainModule({ currentFile, argv = process.argv, env = process.env, cwd = process.cwd(), wrapperEntryPairs = [] }) {
+	const normalizedCurrent = normalizePathCandidate(currentFile, cwd);
+	const normalizedArgv1 = normalizePathCandidate(argv[1], cwd);
+	if (normalizedCurrent && normalizedArgv1 && normalizedCurrent === normalizedArgv1) return true;
+	const normalizedPmExecPath = normalizePathCandidate(env.pm_exec_path, cwd);
+	if (normalizedCurrent && normalizedPmExecPath && normalizedCurrent === normalizedPmExecPath) return true;
+	if (normalizedCurrent && normalizedArgv1 && wrapperEntryPairs.length > 0) {
+		const currentBase = path.basename(normalizedCurrent);
+		const argvBase = path.basename(normalizedArgv1);
+		if (wrapperEntryPairs.some(({ wrapperBasename, entryBasename }) => currentBase === entryBasename && argvBase === wrapperBasename)) return true;
+	}
+	if (normalizedCurrent && normalizedArgv1 && path.basename(normalizedCurrent) === path.basename(normalizedArgv1)) return true;
+	return false;
+}
+
+//#endregion
 //#region src/infra/warning-filter.ts
 const warningFilterKey = Symbol.for("openclaw.warning-filter");
 function shouldIgnoreWarning(warning) {
@@ -2455,64 +2564,75 @@ function attachChildProcessBridge(child, { signals = defaultSignals, onSignal } 
 
 //#endregion
 //#region src/entry.ts
-process$1.title = "openclaw";
-installProcessWarningFilter();
-normalizeEnv();
-if (process$1.argv.includes("--no-color")) {
-	process$1.env.NO_COLOR = "1";
-	process$1.env.FORCE_COLOR = "0";
-}
-const EXPERIMENTAL_WARNING_FLAG = "--disable-warning=ExperimentalWarning";
-function hasExperimentalWarningSuppressed() {
-	const nodeOptions = process$1.env.NODE_OPTIONS ?? "";
-	if (nodeOptions.includes(EXPERIMENTAL_WARNING_FLAG) || nodeOptions.includes("--no-warnings")) return true;
-	for (const arg of process$1.execArgv) if (arg === EXPERIMENTAL_WARNING_FLAG || arg === "--no-warnings") return true;
-	return false;
-}
-function ensureExperimentalWarningSuppressed() {
-	if (shouldSkipRespawnForArgv(process$1.argv)) return false;
-	if (isTruthyEnvValue(process$1.env.OPENCLAW_NO_RESPAWN)) return false;
-	if (isTruthyEnvValue(process$1.env.OPENCLAW_NODE_OPTIONS_READY)) return false;
-	if (hasExperimentalWarningSuppressed()) return false;
-	process$1.env.OPENCLAW_NODE_OPTIONS_READY = "1";
-	const child = spawn(process$1.execPath, [
-		EXPERIMENTAL_WARNING_FLAG,
-		...process$1.execArgv,
-		...process$1.argv.slice(1)
-	], {
-		stdio: "inherit",
-		env: process$1.env
-	});
-	attachChildProcessBridge(child);
-	child.once("exit", (code, signal) => {
-		if (signal) {
-			process$1.exitCode = 1;
-			return;
+if (!isMainModule({
+	currentFile: fileURLToPath(import.meta.url),
+	wrapperEntryPairs: [...[{
+		wrapperBasename: "openclaw.mjs",
+		entryBasename: "entry.js"
+	}, {
+		wrapperBasename: "openclaw.js",
+		entryBasename: "entry.js"
+	}]]
+})) {} else {
+	process$1.title = "openclaw";
+	installProcessWarningFilter();
+	normalizeEnv();
+	if (process$1.argv.includes("--no-color")) {
+		process$1.env.NO_COLOR = "1";
+		process$1.env.FORCE_COLOR = "0";
+	}
+	const EXPERIMENTAL_WARNING_FLAG = "--disable-warning=ExperimentalWarning";
+	function hasExperimentalWarningSuppressed() {
+		const nodeOptions = process$1.env.NODE_OPTIONS ?? "";
+		if (nodeOptions.includes(EXPERIMENTAL_WARNING_FLAG) || nodeOptions.includes("--no-warnings")) return true;
+		for (const arg of process$1.execArgv) if (arg === EXPERIMENTAL_WARNING_FLAG || arg === "--no-warnings") return true;
+		return false;
+	}
+	function ensureExperimentalWarningSuppressed() {
+		if (shouldSkipRespawnForArgv(process$1.argv)) return false;
+		if (isTruthyEnvValue(process$1.env.OPENCLAW_NO_RESPAWN)) return false;
+		if (isTruthyEnvValue(process$1.env.OPENCLAW_NODE_OPTIONS_READY)) return false;
+		if (hasExperimentalWarningSuppressed()) return false;
+		process$1.env.OPENCLAW_NODE_OPTIONS_READY = "1";
+		const child = spawn(process$1.execPath, [
+			EXPERIMENTAL_WARNING_FLAG,
+			...process$1.execArgv,
+			...process$1.argv.slice(1)
+		], {
+			stdio: "inherit",
+			env: process$1.env
+		});
+		attachChildProcessBridge(child);
+		child.once("exit", (code, signal) => {
+			if (signal) {
+				process$1.exitCode = 1;
+				return;
+			}
+			process$1.exit(code ?? 1);
+		});
+		child.once("error", (error) => {
+			console.error("[openclaw] Failed to respawn CLI:", error instanceof Error ? error.stack ?? error.message : error);
+			process$1.exit(1);
+		});
+		return true;
+	}
+	process$1.argv = normalizeWindowsArgv(process$1.argv);
+	if (!ensureExperimentalWarningSuppressed()) {
+		const parsed = parseCliProfileArgs(process$1.argv);
+		if (!parsed.ok) {
+			console.error(`[openclaw] ${parsed.error}`);
+			process$1.exit(2);
 		}
-		process$1.exit(code ?? 1);
-	});
-	child.once("error", (error) => {
-		console.error("[openclaw] Failed to respawn CLI:", error instanceof Error ? error.stack ?? error.message : error);
-		process$1.exit(1);
-	});
-	return true;
-}
-process$1.argv = normalizeWindowsArgv(process$1.argv);
-if (!ensureExperimentalWarningSuppressed()) {
-	const parsed = parseCliProfileArgs(process$1.argv);
-	if (!parsed.ok) {
-		console.error(`[openclaw] ${parsed.error}`);
-		process$1.exit(2);
+		if (parsed.profile) {
+			applyCliProfileEnv({ profile: parsed.profile });
+			process$1.argv = parsed.argv;
+		}
+		import("./run-main-LpgTCmi3.js").then(({ runCli }) => runCli(process$1.argv)).catch((error) => {
+			console.error("[openclaw] Failed to start CLI:", error instanceof Error ? error.stack ?? error.message : error);
+			process$1.exitCode = 1;
+		});
 	}
-	if (parsed.profile) {
-		applyCliProfileEnv({ profile: parsed.profile });
-		process$1.argv = parsed.argv;
-	}
-	import("./run-main-BMh_pieX.js").then(({ runCli }) => runCli(process$1.argv)).catch((error) => {
-		console.error("[openclaw] Failed to start CLI:", error instanceof Error ? error.stack ?? error.message : error);
-		process$1.exitCode = 1;
-	});
 }
 
 //#endregion
-export { isSelfChatMode as $, triggerInternalHook as $t, normalizeChannelId as A, getResolvedLoggerSettings as At, getPluginCommandSpecs as B, resolveConfigPathCandidate as Bt, CHAT_CHANNEL_ORDER as C, success as Ct, getChatChannelMeta as D, theme as Dt, formatChannelSelectionLine as E, isRich as Et, createEmptyPluginRegistry as F, DEFAULT_GATEWAY_PORT as Ft, clampInt as G, resolveLegacyStateDirs as Gt, matchPluginCommand as H, resolveGatewayLockDir as Ht, createPluginRegistry as I, STATE_DIR as It, displayString as J, resolveOAuthPath as Jt, clampNumber as K, resolveNewStateDir as Kt, normalizePluginHttpPath as L, isNixMode as Lt, getActivePluginRegistry as M, normalizeLogLevel as Mt, requireActivePluginRegistry as N, resolvePreferredOpenClawTmpDir as Nt, listChatChannels as O, getChildLogger as Ot, setActivePluginRegistry as P, CONFIG_PATH as Pt, isRecord as Q, registerInternalHook as Qt, clearPluginCommands as R, resolveCanonicalConfigPath as Rt, CHANNEL_IDS as S, shouldLogVerbose as St, formatChannelPrimerLine as T, colorize as Tt, CONFIG_DIR as U, resolveGatewayPort as Ut, listPluginCommands as V, resolveDefaultConfigCandidates as Vt, clamp as W, resolveIsNixMode as Wt, escapeRegExp as X, clearInternalHooks as Xt, ensureDir as Y, resolveStateDir as Yt, formatTerminalLink as Z, createInternalHookEvent as Zt, defaultRuntime as _, isVerbose as _t, parseBooleanValue as a, getPrimaryCommand as an, resolveJidToE164 as at, registerActiveProgressLine as b, logVerboseConsole as bt, enableConsoleCapture as c, hasHelpOrVersion as cn, shortenHomeInString as ct, setConsoleTimestampPrefix as d, normalizeProfileName as dn, sliceUtf16Safe as dt, normalizeWindowsArgv as en, jidToE164 as et, shouldLogSubsystemToConsole as f, expandHomePrefix as fn, toWhatsappJid as ft, createNonExitingRuntime as g, info as gt, visibleWidth as h, danger as ht, normalizeEnv as i, getPositiveIntFlagValue as in, resolveHomeDir as it, normalizeChatChannelId as j, toPinoLikeLogger as jt, normalizeAnyChannelId as k, getLogger as kt, routeLogsToStderr as l, hasRootVersionAlias as ln, shortenHomePath as lt, stripAnsi as m, isPlainObject as mt, isTruthyEnvValue as n, getCommandPath as nn, pathExists as nt, createSubsystemLogger as o, getVerboseFlag as on, resolveUserPath as ot, formatLocalIsoWithOffset as p, resolveRequiredHomeDir as pn, truncateUtf16Safe as pt, displayPath as q, resolveOAuthDir as qt, logAcceptedEnvOption as r, getFlagValue as rn, resolveConfigDir as rt, runtimeForLogger as s, hasFlag as sn, safeParseJson as st, installProcessWarningFilter as t, buildParseArgv as tn, normalizeE164 as tt, setConsoleSubsystemFilter as u, shouldMigrateStateFromPath as un, sleep as ut, restoreTerminalState as v, isYes as vt, DEFAULT_CHAT_CHANNEL as w, warn as wt, unregisterActiveProgressLine as x, setVerbose as xt, clearActiveProgressLine as y, logVerbose as yt, executePluginCommand as z, resolveConfigPath as zt };
+export { isRecord as $, resolveStateDir as $t, normalizeChannelId as A, getLogger as At, executePluginCommand as B, STATE_DIR as Bt, CHANNEL_IDS as C, shouldLogVerbose as Ct, getChatChannelMeta as D, isRich as Dt, formatChannelSelectionLine as E, colorize as Et, setActivePluginRegistry as F, normalizeLogLevel as Ft, clamp as G, resolveDefaultConfigCandidates as Gt, listPluginCommands as H, resolveCanonicalConfigPath as Ht, createEmptyPluginRegistry as I, tryParseLogLevel as It, displayPath as J, resolveIsNixMode as Jt, clampInt as K, resolveGatewayLockDir as Kt, createPluginRegistry as L, resolvePreferredOpenClawTmpDir as Lt, getActivePluginRegistry as M, toPinoLikeLogger as Mt, getActivePluginRegistryKey as N, resolveNodeRequireFromMeta as Nt, listChatChannels as O, theme as Ot, requireActivePluginRegistry as P, ALLOWED_LOG_LEVELS as Pt, formatTerminalLink as Q, resolveOAuthPath as Qt, normalizePluginHttpPath as R, CONFIG_PATH as Rt, unregisterActiveProgressLine as S, setVerbose as St, formatChannelPrimerLine as T, warn as Tt, matchPluginCommand as U, resolveConfigPath as Ut, getPluginCommandSpecs as V, isNixMode as Vt, CONFIG_DIR as W, resolveConfigPathCandidate as Wt, ensureDir as X, resolveNewStateDir as Xt, displayString as Y, resolveLegacyStateDirs as Yt, escapeRegExp as Z, resolveOAuthDir as Zt, createNonExitingRuntime as _, resolveRequiredHomeDir as _n, info as _t, normalizeEnv as a, buildParseArgv as an, resolveHomeDir as at, clearActiveProgressLine as b, logVerbose as bt, runtimeForLogger as c, getPositiveIntFlagValue as cn, safeParseJson as ct, setConsoleSubsystemFilter as d, hasFlag as dn, sleep as dt, clearInternalHooks as en, isSelfChatMode as et, setConsoleTimestampPrefix as f, hasHelpOrVersion as fn, sliceUtf16Safe as ft, visibleWidth as g, expandHomePrefix as gn, danger as gt, stripAnsi as h, normalizeProfileName as hn, isPlainObject as ht, logAcceptedEnvOption as i, normalizeWindowsArgv as in, resolveConfigDir as it, normalizeChatChannelId as j, getResolvedLoggerSettings as jt, normalizeAnyChannelId as k, getChildLogger as kt, enableConsoleCapture as l, getPrimaryCommand as ln, shortenHomeInString as lt, formatLocalIsoWithOffset as m, shouldMigrateStateFromPath as mn, truncateUtf16Safe as mt, isMainModule as n, registerInternalHook as nn, normalizeE164 as nt, parseBooleanValue as o, getCommandPath as on, resolveJidToE164 as ot, shouldLogSubsystemToConsole as p, hasRootVersionAlias as pn, toWhatsappJid as pt, clampNumber as q, resolveGatewayPort as qt, isTruthyEnvValue as r, triggerInternalHook as rn, pathExists as rt, createSubsystemLogger as s, getFlagValue as sn, resolveUserPath as st, installProcessWarningFilter as t, createInternalHookEvent as tn, jidToE164 as tt, routeLogsToStderr as u, getVerboseFlag as un, shortenHomePath as ut, defaultRuntime as v, isVerbose as vt, CHAT_CHANNEL_ORDER as w, success as wt, registerActiveProgressLine as x, logVerboseConsole as xt, restoreTerminalState as y, isYes as yt, clearPluginCommands as z, DEFAULT_GATEWAY_PORT as zt };

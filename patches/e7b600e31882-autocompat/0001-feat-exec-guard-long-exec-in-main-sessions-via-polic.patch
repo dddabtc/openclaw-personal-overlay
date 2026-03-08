@@ -1,4 +1,4 @@
-From 7a05b0c9da5496468a0d214c9de7578b741b5d3a Mon Sep 17 00:00:00 2001
+From fb2be4a1111e45326243beb24f79253f33648b86 Mon Sep 17 00:00:00 2001
 From: dddabtc <zhaodali78@gmail.com>
 Date: Thu, 19 Feb 2026 00:26:43 -0400
 Subject: [PATCH 1/8] feat(exec): guard long exec in main sessions via policy
@@ -8,11 +8,11 @@ Subject: [PATCH 1/8] feat(exec): guard long exec in main sessions via policy
  ...ash-tools.exec.main-session-policy.test.ts |  38 +
  src/agents/bash-tools.exec.ts                 |  41 +
  src/agents/pi-tools-agent-config.test.ts      |  26 +
- src/agents/pi-tools.ts                        |  14 +
+ src/agents/pi-tools.ts                        |   1 +
  src/config/schema.ts                          | 761 ++++++++++++++++++
  src/config/types.openclaw.ts                  |   7 +
  src/config/zod-schema.ts                      |  13 +
- 8 files changed, 907 insertions(+)
+ 8 files changed, 894 insertions(+)
  create mode 100644 src/agents/bash-tools.exec.main-session-policy.test.ts
 
 diff --git a/src/agents/bash-tools.exec-types.ts b/src/agents/bash-tools.exec-types.ts
@@ -193,30 +193,10 @@ index e24186e0b..1870488b0 100644
 +  });
  });
 diff --git a/src/agents/pi-tools.ts b/src/agents/pi-tools.ts
-index 543a163ab..b85798a92 100644
+index 543a163ab..4c365df80 100644
 --- a/src/agents/pi-tools.ts
 +++ b/src/agents/pi-tools.ts
-@@ -182,6 +182,19 @@ export function resolveToolLoopDetectionConfig(params: {
-       ...global.detectors,
-       ...agent.detectors,
-     },
-+    host: globalExec?.host,
-+    security: globalExec?.security,
-+    ask: globalExec?.ask,
-+    node: globalExec?.node,
-+    pathPrepend: globalExec?.pathPrepend,
-+    safeBins: globalExec?.safeBins,
-+    backgroundMs: globalExec?.backgroundMs,
-+    timeoutSec: globalExec?.timeoutSec,
-+    approvalRunningNoticeMs: globalExec?.approvalRunningNoticeMs,
-+    cleanupMs: globalExec?.cleanupMs,
-+    notifyOnExit: globalExec?.notifyOnExit,
-+    applyPatch: globalExec?.applyPatch,
-+    mainSessionPolicy: cfg?.sessionPolicies?.main,
-   };
- }
- 
-@@ -417,6 +430,7 @@ export function createOpenClawCodingTools(options?: {
+@@ -417,6 +417,7 @@ export function createOpenClawCodingTools(options?: {
      notifyOnExit: options?.exec?.notifyOnExit ?? execConfig.notifyOnExit,
      notifyOnExitEmptySuccess:
        options?.exec?.notifyOnExitEmptySuccess ?? execConfig.notifyOnExitEmptySuccess,

@@ -1,7 +1,7 @@
 {
   "format": "openclaw-personal-dist-overlay/v1",
-  "overlayVersion": "65a04ff",
-  "targetOpenclawVersion": "2026.2.21-2",
-  "targetCommitSha": "unknown",
-  "builtAt": "2026-02-22T19:46:56Z"
+  "overlayVersion": "overlay-v2026.3.7",
+  "targetOpenclawVersion": "2026.3.7",
+  "targetCommitSha": "42a1394c5c0fb86706f61598e68e0db30e8c99c1",
+  "builtAt": "2026-03-08T09:08:19Z"
 }
