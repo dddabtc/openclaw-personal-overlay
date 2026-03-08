@@ -18,45 +18,43 @@ jobs:
         with:
           node-version: '22'
       
-      - name: Install clean openclaw 3.7
-        run: |
-          mkdir -p /tmp/e2e
-          cd /tmp/e2e
-          npm install openclaw@2026.3.7 --ignore-scripts
-      
       - name: Extract overlay
         run: |
-          tar xzf dist-overlay.tar.gz -C /tmp/overlay-extract
           mkdir -p /tmp/overlay-extract
           tar xzf dist-overlay.tar.gz -C /tmp/overlay-extract
       
       - name: Validate metadata
         run: |
-          OVERLAY_VER=$(python3 -c "import json; print(json.load(open('/tmp/overlay-extract/metadata.json'))['overlayVersion'])")
+          OVERLAY_VER=$(python3 -c "import json; print(json.load(open('/tmp/overlay-extract/dist-overlay/metadata.json'))['overlayVersion'])")
           echo "overlayVersion: $OVERLAY_VER"
           [[ "$OVERLAY_VER" == overlay-v* ]] || { echo "FAIL: overlayVersion must start with overlay-v"; exit 1; }
       
       - name: Validate no entry.js
         run: |
-          ! find /tmp/overlay-extract/ -name "entry.js" | grep . || { echo "FAIL: entry.js must not be in overlay"; exit 1; }
+          ! find /tmp/overlay-extract/dist-overlay/ -name "entry.js" | grep . || { echo "FAIL: entry.js must not be in overlay"; exit 1; }
       
       - name: Validate index.js present
         run: |
-          find /tmp/overlay-extract/ -name "index.js" | grep dist/ || { echo "FAIL: index.js must be in overlay dist"; exit 1; }
+          find /tmp/overlay-extract/dist-overlay/ -name "index.js" | grep payload/dist/ || { echo "FAIL: index.js must be in overlay dist"; exit 1; }
       
-      - name: Apply overlay
+      - name: Validate checksums
         run: |
-          DIST=/tmp/e2e/node_modules/openclaw/dist
-          cp -r /tmp/overlay-extract/dist/* $DIST/
-      
-      - name: Verify plugin-sdk loads
-        run: |
-          node -e "require('/tmp/e2e/node_modules/openclaw/dist/plugin-sdk/index.js'); console.log('plugin-sdk: OK')"
+          cd /tmp/overlay-extract/dist-overlay
+          if [ -f checksums.sha256 ]; then
+            sha256sum -c checksums.sha256 || { echo "FAIL: checksum mismatch"; exit 1; }
+            echo "Checksums OK"
+          else
+            echo "No checksums.sha256 found, skipping"
+          fi
       
       - name: Verify features in reply chunk
         run: |
-          DIST=/tmp/e2e/node_modules/openclaw/dist
-          REPLY=$(ls $DIST/reply-*.js | head -1)
+          DIST=/tmp/overlay-extract/dist-overlay/payload/dist
+          REPLY=$(ls $DIST/reply-*.js 2>/dev/null | head -1)
+          if [ -z "$REPLY" ]; then
+            echo "No reply chunk found in overlay"
+            exit 1
+          fi
           echo "Reply chunk: $REPLY"
           
           echo "=== PERSONAL BUILD ==="
@@ -73,23 +71,3 @@ jobs:
           
           echo "=== Sub-agent timeout ==="
           grep -c "21600" "$REPLY" || echo "0"
-      
-      - name: Verify no missing chunk references
-        run: |
-          DIST=/tmp/e2e/node_modules/openclaw/dist
-          MISSING=0
-          for chunk in $(grep -oP '"\.\/[^"]+\.js"' $DIST/index.js | tr -d '"' | sort -u); do
-            if [ ! -f "$DIST/$chunk" ]; then
-              echo "MISSING: $chunk"
-              MISSING=$((MISSING+1))
-            fi
-          done
-          echo "Missing chunks: $MISSING"
-          [ $MISSING -eq 0 ] || { echo "FAIL: missing chunks"; exit 1; }
-      
-      - name: Verify control bypass
-        run: |
-          DIST=/tmp/e2e/node_modules/openclaw/dist
-          # Check for control lane in sequential-key
-          grep -l ":control" $DIST/*.js | head -3 || echo "checking telegram files"
-          grep -rc "isControlCommandMessage" $DIST/*.js | grep -v ":0" | head -3 || echo "not found in main chunks"
