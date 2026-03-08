@@ -1,0 +1,310 @@
+From 88b3fa36cf00d983196c7a80dcda077aa8b0aa99 Mon Sep 17 00:00:00 2001
+From: subagent-bot <subagent-bot@example.com>
+Date: Sun, 8 Mar 2026 10:44:23 -0300
+Subject: [PATCH 3/4] feat(exec): add main session policy for exec guard, SSH
+ block, and output cap
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+PERSONAL BUILD v5: Stricter exec guard for main sessions:
+- Main session + timeout > 30s → blocked (foreground OR background)
+- Main session + timeout <= 30s → allowed
+- Subagent sessions → no restrictions
+- SSH/SCP/SFTP commands blocked in main session
+- Output cap (default 50KB) for main session exec
+
+Error messages direct users to sessions_spawn.
+---
+ src/agents/bash-tools.exec-types.ts    |  19 ++++
+ src/agents/bash-tools.exec.ts          | 132 ++++++++++++++++++++++++-
+ src/agents/pi-tools.ts                 |   4 +
+ src/config/types.tools.ts              |  16 +++
+ src/config/zod-schema.agent-runtime.ts |  14 +++
+ 5 files changed, 183 insertions(+), 2 deletions(-)
+
+diff --git a/src/agents/bash-tools.exec-types.ts b/src/agents/bash-tools.exec-types.ts
+index bef8ea4bf..6e638530a 100644
+--- a/src/agents/bash-tools.exec-types.ts
++++ b/src/agents/bash-tools.exec-types.ts
+@@ -2,6 +2,23 @@ import type { ExecAsk, ExecHost, ExecSecurity } from "../infra/exec-approvals.js
+ import type { SafeBinProfileFixture } from "../infra/exec-safe-bin-policy.js";
+ import type { BashSandboxConfig } from "./bash-tools.shared.js";
+ 
++/**
++ * PERSONAL BUILD: Main session execution policy.
++ * Controls restrictions on exec commands in the main agent session.
++ */
++export type ExecMainSessionPolicy = {
++  /** Block long-running foreground commands in main session. */
++  forbidLongExec?: boolean;
++  /** Require background=true for all exec in main session. */
++  requireBackgroundForExec?: boolean;
++  /** Maximum allowed timeout (seconds) for foreground exec in main session. */
++  maxExecTimeoutSec?: number;
++  /** Block SSH-related commands (ssh, scp, sftp, rsync over ssh). */
++  blockSshCommands?: boolean;
++  /** Maximum output bytes for main session (default: 50KB = 51200). */
++  maxOutputBytes?: number;
++};
++
+ export type ExecToolDefaults = {
+   host?: ExecHost;
+   security?: ExecSecurity;
+@@ -27,6 +44,8 @@ export type ExecToolDefaults = {
+   notifyOnExit?: boolean;
+   notifyOnExitEmptySuccess?: boolean;
+   cwd?: string;
++  /** PERSONAL BUILD: Main session execution policy. */
++  mainSessionPolicy?: ExecMainSessionPolicy;
+ };
+ 
+ export type ExecElevatedDefaults = {
+diff --git a/src/agents/bash-tools.exec.ts b/src/agents/bash-tools.exec.ts
+index 8a0bd3090..d1ada4e48 100644
+--- a/src/agents/bash-tools.exec.ts
++++ b/src/agents/bash-tools.exec.ts
+@@ -31,6 +31,7 @@ import {
+ } from "./bash-tools.exec-runtime.js";
+ import type {
+   ExecElevatedDefaults,
++  ExecMainSessionPolicy,
+   ExecToolDefaults,
+   ExecToolDetails,
+ } from "./bash-tools.exec-types.js";
+@@ -48,6 +49,7 @@ import { assertSandboxPath } from "./sandbox-paths.js";
+ export type { BashSandboxConfig } from "./bash-tools.shared.js";
+ export type {
+   ExecElevatedDefaults,
++  ExecMainSessionPolicy,
+   ExecToolDefaults,
+   ExecToolDetails,
+ } from "./bash-tools.exec-types.js";
+@@ -148,6 +150,110 @@ async function validateScriptFileForShellBleed(params: {
+   }
+ }
+ 
++// PERSONAL BUILD: Main session detection and policy enforcement
++
++/**
++ * Check if the session key indicates a main agent session (not a subagent).
++ */
++function isMainAgentSession(sessionKey?: string): boolean {
++  const parsed = parseAgentSessionKey(sessionKey);
++  if (!parsed) {
++    // Fallback: if sessionKey is exactly "main" or ends with ":main"
++    const key = (sessionKey ?? "").trim().toLowerCase();
++    return key === "main" || key.endsWith(":main");
++  }
++  // A subagent session key contains "subagent:" in the rest portion
++  return !parsed.rest.includes("subagent:");
++}
++
++/**
++ * Resolve the maximum exec timeout for main session policy.
++ */
++function resolveMainSessionMaxExecTimeoutSec(policy?: ExecMainSessionPolicy): number {
++  const raw = policy?.maxExecTimeoutSec;
++  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
++    return 120; // Default: 2 minutes for main session foreground exec
++  }
++  return Math.floor(raw);
++}
++
++/**
++ * SSH command patterns to block in main session.
++ */
++const SSH_COMMAND_PATTERNS = [
++  /^\s*ssh\b/i,
++  /^\s*scp\b/i,
++  /^\s*sftp\b/i,
++  /^\s*rsync\s+.*-e\s+['"]?ssh/i,
++  /^\s*rsync\s+.*--rsh\s*=\s*['"]?ssh/i,
++  /^\s*rsync\s+[^/]*:/i, // rsync to remote (user@host:path)
++];
++
++function isSshCommand(command: string): boolean {
++  return SSH_COMMAND_PATTERNS.some((pattern) => pattern.test(command));
++}
++
++/**
++ * Apply main session policy checks to exec command.
++ * Throws if the command violates the policy.
++ *
++ * PERSONAL BUILD v5: Stricter exec guard
++ * - Main session + timeout > 30s → blocked (foreground OR background)
++ * - Main session + timeout <= 30s → allowed
++ * - Subagent sessions → no restrictions
++ */
++function enforceMainSessionPolicy(params: {
++  command: string;
++  sessionKey?: string;
++  policy?: ExecMainSessionPolicy;
++  timeout?: number;
++  background?: boolean;
++  yieldMs?: number;
++}): void {
++  const { command, sessionKey, policy, timeout } = params;
++
++  // Subagent sessions have no restrictions
++  if (!isMainAgentSession(sessionKey)) {
++    return;
++  }
++
++  // Default policy when none configured - enforce safety by default
++  const effectivePolicy: ExecMainSessionPolicy = policy ?? {
++    blockSshCommands: true,
++    forbidLongExec: true,
++    maxExecTimeoutSec: 30,
++    maxOutputBytes: 51200,
++  };
++
++  // Check SSH block
++  if (effectivePolicy.blockSshCommands && isSshCommand(command)) {
++    throw new Error(
++      [
++        "Main session policy blocked SSH command.",
++        "Use sessions_spawn to run this in a sub-session.",
++      ].join("\n"),
++    );
++  }
++
++  // Check timeout block - any exec with timeout > 30s is blocked in main session
++  // This applies to BOTH foreground AND background exec
++  if (effectivePolicy.forbidLongExec) {
++    const maxExecTimeoutSec = resolveMainSessionMaxExecTimeoutSec(effectivePolicy);
++    // undefined/0/negative timeout means unlimited → treat as Infinity
++    const effectiveTimeout = timeout && timeout > 0 ? timeout : Infinity;
++
++    if (effectiveTimeout > maxExecTimeoutSec) {
++      const timeoutStr = Number.isFinite(effectiveTimeout) ? `${effectiveTimeout}s` : "unlimited";
++      throw new Error(
++        [
++          `Main session policy blocked exec: timeout ${timeoutStr} exceeds ${maxExecTimeoutSec}s limit.`,
++          "Use sessions_spawn to run this in a sub-session.",
++        ].join("\n"),
++      );
++    }
++  }
++}
++
+ export function createExecTool(
+   defaults?: ExecToolDefaults,
+   // oxlint-disable-next-line typescript/no-explicit-any
+@@ -226,8 +332,30 @@ export function createExecTool(
+         throw new Error("Provide a command to start.");
+       }
+ 
+-      const maxOutput = DEFAULT_MAX_OUTPUT;
+-      const pendingMaxOutput = DEFAULT_PENDING_MAX_OUTPUT;
++      // PERSONAL BUILD: Enforce main session policy
++      enforceMainSessionPolicy({
++        command: params.command,
++        sessionKey: defaults?.sessionKey,
++        policy: defaults?.mainSessionPolicy,
++        timeout: params.timeout,
++        background: params.background,
++        yieldMs: params.yieldMs,
++      });
++
++      // PERSONAL BUILD: Apply output cap from main session policy
++      const policyMaxOutput = defaults?.mainSessionPolicy?.maxOutputBytes;
++      const mainSessionOutputCap =
++        isMainAgentSession(defaults?.sessionKey) &&
++        typeof policyMaxOutput === "number" &&
++        policyMaxOutput > 0
++          ? policyMaxOutput
++          : undefined;
++      const maxOutput = mainSessionOutputCap
++        ? Math.min(DEFAULT_MAX_OUTPUT, mainSessionOutputCap)
++        : DEFAULT_MAX_OUTPUT;
++      const pendingMaxOutput = mainSessionOutputCap
++        ? Math.min(DEFAULT_PENDING_MAX_OUTPUT, mainSessionOutputCap)
++        : DEFAULT_PENDING_MAX_OUTPUT;
+       const warnings: string[] = [];
+       let execCommandOverride: string | undefined;
+       const backgroundRequested = params.background === true;
+diff --git a/src/agents/pi-tools.ts b/src/agents/pi-tools.ts
+index 543a163ab..834cc70ee 100644
+--- a/src/agents/pi-tools.ts
++++ b/src/agents/pi-tools.ts
+@@ -155,6 +155,8 @@ function resolveExecConfig(params: { cfg?: OpenClawConfig; agentId?: string }) {
+     notifyOnExitEmptySuccess:
+       agentExec?.notifyOnExitEmptySuccess ?? globalExec?.notifyOnExitEmptySuccess,
+     applyPatch: agentExec?.applyPatch ?? globalExec?.applyPatch,
++    // PERSONAL BUILD: Main session execution policy
++    mainSessionPolicy: agentExec?.mainSessionPolicy ?? globalExec?.mainSessionPolicy,
+   };
+ }
+ 
+@@ -425,6 +427,8 @@ export function createOpenClawCodingTools(options?: {
+           env: sandbox.docker.env,
+         }
+       : undefined,
++    // PERSONAL BUILD: Main session execution policy
++    mainSessionPolicy: options?.exec?.mainSessionPolicy ?? execConfig.mainSessionPolicy,
+   });
+   const processTool = createProcessTool({
+     cleanupMs: cleanupMsOverride ?? execConfig.cleanupMs,
+diff --git a/src/config/types.tools.ts b/src/config/types.tools.ts
+index 5c8152f0e..d62a54a26 100644
+--- a/src/config/types.tools.ts
++++ b/src/config/types.tools.ts
+@@ -272,6 +272,22 @@ export type ExecToolConfig = {
+      */
+     allowModels?: string[];
+   };
++  /**
++   * PERSONAL BUILD: Main session execution policy.
++   * Controls restrictions on exec commands in the main agent session.
++   */
++  mainSessionPolicy?: {
++    /** Block long-running foreground commands in main session. */
++    forbidLongExec?: boolean;
++    /** Require background=true for all exec in main session. */
++    requireBackgroundForExec?: boolean;
++    /** Maximum allowed timeout (seconds) for foreground exec in main session. */
++    maxExecTimeoutSec?: number;
++    /** Block SSH-related commands (ssh, scp, sftp, rsync over ssh). */
++    blockSshCommands?: boolean;
++    /** Maximum output bytes for main session (default: 50KB = 51200). */
++    maxOutputBytes?: number;
++  };
+ };
+ 
+ export type FsToolsConfig = {
+diff --git a/src/config/zod-schema.agent-runtime.ts b/src/config/zod-schema.agent-runtime.ts
+index 227891711..fbef93cb5 100644
+--- a/src/config/zod-schema.agent-runtime.ts
++++ b/src/config/zod-schema.agent-runtime.ts
+@@ -394,6 +394,18 @@ const ToolExecSafeBinProfileSchema = z
+   })
+   .strict();
+ 
++// PERSONAL BUILD: Main session execution policy schema
++const MainSessionPolicySchema = z
++  .object({
++    forbidLongExec: z.boolean().optional(),
++    requireBackgroundForExec: z.boolean().optional(),
++    maxExecTimeoutSec: z.number().int().positive().optional(),
++    blockSshCommands: z.boolean().optional(),
++    maxOutputBytes: z.number().int().positive().optional(),
++  })
++  .strict()
++  .optional();
++
+ const ToolExecBaseShape = {
+   host: z.enum(["sandbox", "gateway", "node"]).optional(),
+   security: z.enum(["deny", "allowlist", "full"]).optional(),
+@@ -409,6 +421,8 @@ const ToolExecBaseShape = {
+   notifyOnExit: z.boolean().optional(),
+   notifyOnExitEmptySuccess: z.boolean().optional(),
+   applyPatch: ToolExecApplyPatchSchema,
++  // PERSONAL BUILD: Main session execution policy
++  mainSessionPolicy: MainSessionPolicySchema,
+ } as const;
+ 
+ const AgentToolExecSchema = z
+-- 
+2.25.1
+

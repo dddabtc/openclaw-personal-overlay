@@ -1,0 +1,76 @@
+From 250818ce0f4b4ed964542aa58fda3ba9df278985 Mon Sep 17 00:00:00 2001
+From: subagent-bot <subagent-bot@example.com>
+Date: Sun, 8 Mar 2026 10:44:09 -0300
+Subject: [PATCH 2/4] feat(status): add PERSONAL BUILD tag to gateway status
+ output
+
+PERSONAL BUILD: Show build date and repo in status output.
+- /status command shows PERSONAL BUILD tag
+- CLI openclaw status shows tag at top
+---
+ src/auto-reply/status.ts           | 7 +++++++
+ src/cli/daemon-cli/status.print.ts | 9 +++++++++
+ 2 files changed, 16 insertions(+)
+
+diff --git a/src/auto-reply/status.ts b/src/auto-reply/status.ts
+index a08931b1c..cdc505485 100644
+--- a/src/auto-reply/status.ts
++++ b/src/auto-reply/status.ts
+@@ -1,6 +1,10 @@
+ import fs from "node:fs";
+ import { resolveContextTokensForModel } from "../agents/context.js";
+ import { DEFAULT_CONTEXT_TOKENS, DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
++
++// PERSONAL BUILD metadata injected at build time
++const PERSONAL_BUILD_DATE = "2026-03-08T10:30";
++const PERSONAL_BUILD_REPO = "https://github.com/dddabtc";
+ import { resolveModelAuthMode } from "../agents/model-auth.js";
+ import {
+   buildModelAliasIndex,
+@@ -657,6 +661,8 @@ export function buildStatusMessage(args: StatusArgs): string {
+     : null;
+   const commit = resolveCommitHash();
+   const versionLine = `🦞 OpenClaw ${VERSION}${commit ? ` (${commit})` : ""}`;
++  // PERSONAL BUILD: Add build tag line
++  const personalBuildLine = `🏷 PERSONAL BUILD · ${PERSONAL_BUILD_DATE}(UTC)\n${PERSONAL_BUILD_REPO}`;
+   const usagePair = formatUsagePair(inputTokens, outputTokens);
+   const cacheLine = formatCacheLine(inputTokens, cacheRead, cacheWrite);
+   const costLine = costLabel ? `💵 Cost: ${costLabel}` : null;
+@@ -667,6 +673,7 @@ export function buildStatusMessage(args: StatusArgs): string {
+ 
+   return [
+     versionLine,
++    personalBuildLine,
+     args.timeLine,
+     modelLine,
+     fallbackLine,
+diff --git a/src/cli/daemon-cli/status.print.ts b/src/cli/daemon-cli/status.print.ts
+index ce9934f7e..407c4e7ed 100644
+--- a/src/cli/daemon-cli/status.print.ts
++++ b/src/cli/daemon-cli/status.print.ts
+@@ -49,6 +49,10 @@ function sanitizeDaemonStatusForJson(status: DaemonStatus): DaemonStatus {
+   };
+ }
+ 
++// PERSONAL BUILD metadata injected at build time
++const PERSONAL_BUILD_DATE = "2026-03-08T10:30";
++const PERSONAL_BUILD_REPO = "https://github.com/dddabtc";
++
+ export function printDaemonStatus(status: DaemonStatus, opts: { json: boolean }) {
+   if (opts.json) {
+     const sanitized = sanitizeDaemonStatusForJson(status);
+@@ -58,6 +62,11 @@ export function printDaemonStatus(status: DaemonStatus, opts: { json: boolean })
+ 
+   const { rich, label, accent, infoText, okText, warnText, errorText } =
+     createCliStatusTextStyles();
++
++  // Print PERSONAL BUILD tag at the top
++  defaultRuntime.log(`🏷 PERSONAL BUILD · ${PERSONAL_BUILD_DATE}(UTC)`);
++  defaultRuntime.log(PERSONAL_BUILD_REPO);
++  defaultRuntime.log("");
+   const spacer = () => defaultRuntime.log("");
+ 
+   const { service, rpc, extraServices } = status;
+-- 
+2.25.1
+
