@@ -28,24 +28,6 @@ if [[ ! -d "$WORK_DIR/dist" ]]; then
   exit 2
 fi
 
-rm -rf "$OUT_DIR"
-mkdir -p "$OUT_DIR/payload"
-
-# Always include the full rebuilt dist payload.
-# Rationale: root entry files (entry.js/index.js/openclaw.mjs) can keep the same
-# filename while their import graph changes to new hashed chunks. Sending only a
-# diff subset can miss these content updates and break runtime imports.
-mkdir -p "$OUT_DIR/payload/dist"
-rsync -a "$WORK_DIR/dist/" "$OUT_DIR/payload/dist/"
-
-if [[ "$INCLUDE_PACKAGE_JSON" == "1" && -f "$WORK_DIR/package.json" ]]; then
-  cp "$WORK_DIR/package.json" "$OUT_DIR/payload/package.json"
-fi
-
-if [[ "$INCLUDE_PNPM_LOCK" == "1" && -f "$WORK_DIR/pnpm-lock.yaml" ]]; then
-  cp "$WORK_DIR/pnpm-lock.yaml" "$OUT_DIR/payload/pnpm-lock.yaml"
-fi
-
 if [[ -z "$TARGET_VERSION" || -z "$TARGET_COMMIT" ]]; then
   mapfile -t vals < <(python3 - <<PY
 import json
@@ -59,6 +41,49 @@ PY
   TARGET_VERSION="${TARGET_VERSION:-${vals[0]}}"
   TARGET_COMMIT="${TARGET_COMMIT:-${vals[1]}}"
 fi
+
+_tmp_baseline=""
+cleanup() {
+  if [[ -n "$_tmp_baseline" && -d "$_tmp_baseline" ]]; then
+    rm -rf "$_tmp_baseline"
+  fi
+}
+trap cleanup EXIT
+
+if [[ -z "$BASELINE_DIR" ]]; then
+  echo "[INFO] BASELINE_DIR not provided; downloading openclaw@${TARGET_VERSION} from npm"
+  _tmp_baseline="$(mktemp -d)"
+  (
+    cd "$_tmp_baseline"
+    npm pack --silent "openclaw@${TARGET_VERSION}" >/dev/null
+    tar -xzf openclaw-*.tgz
+  )
+  BASELINE_DIR="$_tmp_baseline/package"
+fi
+
+if [[ ! -d "$BASELINE_DIR/dist" ]]; then
+  echo "[ERR] baseline dist directory missing: $BASELINE_DIR/dist" >&2
+  exit 2
+fi
+
+rm -rf "$OUT_DIR"
+mkdir -p "$OUT_DIR/payload/dist"
+
+# Build payload from baseline dist first, then overlay patched files.
+# This avoids dropping upstream-only artifacts (notably dist/plugin-sdk entries)
+# when local pnpm build output is partial.
+rsync -a "$BASELINE_DIR/dist/" "$OUT_DIR/payload/dist/"
+rsync -a "$WORK_DIR/dist/" "$OUT_DIR/payload/dist/"
+
+if [[ "$INCLUDE_PACKAGE_JSON" == "1" && -f "$WORK_DIR/package.json" ]]; then
+  cp "$WORK_DIR/package.json" "$OUT_DIR/payload/package.json"
+fi
+
+if [[ "$INCLUDE_PNPM_LOCK" == "1" && -f "$WORK_DIR/pnpm-lock.yaml" ]]; then
+  cp "$WORK_DIR/pnpm-lock.yaml" "$OUT_DIR/payload/pnpm-lock.yaml"
+fi
+
+scripts/validate-dist-exports.sh "$OUT_DIR/payload" "$TARGET_VERSION"
 
 cat > "$OUT_DIR/metadata.json" <<JSON
 {
