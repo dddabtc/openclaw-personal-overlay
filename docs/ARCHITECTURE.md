@@ -275,33 +275,89 @@ bin/openclaw-personal rollback
 
 ## 6. CI Design
 
-### validate-overlay.yml
+### validate-overlay.yml (Build + Validate + Release)
 
-**Purpose:** Validate overlay tarball integrity and correctness for full-replace mode.
+**Purpose:** CI builds overlay from source, validates all features, and publishes releases.
 
-**Validation steps:**
+**Triggers:**
+- Push to `main` branch → build + validate only
+- Pull request → build + validate only
+- Tag push (`overlay-v*`) → build + validate + release
+- Manual workflow dispatch → build + validate + optional release
 
-1. **Extract overlay:** Unpack `dist-overlay.tar.gz`
+**CI Pipeline Flow:**
 
-2. **Validate metadata:** 
-   - `overlayVersion` starts with `overlay-v`
-   - `mode` is `full-replace`
+```
+┌─────────────────────────────────────────────────────────┐
+│ 1. Checkout overlay repo (contains patches/)            │
+└───────────────────────────┬─────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────┐
+│ 2. Clone openclaw source from GitHub                    │
+│    git clone https://github.com/openclaw/openclaw.git   │
+│    git checkout <upstream_base_commit>                  │
+└───────────────────────────┬─────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────┐
+│ 3. Apply patches from patches/3.7/*.patch              │
+│    git am patches/3.7/0001-*.patch ...                  │
+└───────────────────────────┬─────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────┐
+│ 4. Build from source                                    │
+│    pnpm install --no-frozen-lockfile                    │
+│    pnpm build                                           │
+└───────────────────────────┬─────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────┐
+│ 5. Validate all 6 features (strict exit 1)              │
+│    ✓ PERSONAL BUILD tag (with dddabtc link)             │
+│    ✓ Exec guard ("Main session policy blocked")        │
+│    ✓ SSH block (isSshCommand)                           │
+│    ✓ Output cap (maxOutputBytes)                        │
+│    ✓ Sub-agent timeout (21600)                          │
+│    ✓ Control fast-path (:control lane)                  │
+└───────────────────────────┬─────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────┐
+│ 6. Package overlay                                      │
+│    scripts/build-dist-overlay.sh → dist-overlay.tar.gz  │
+└───────────────────────────┬─────────────────────────────┘
+                            │
+        ┌───────────────────┴───────────────────┐
+        │ Tag push or manual release?            │
+        └───────────┬───────────────┬───────────┘
+                    │ Yes           │ No
+                    ▼               ▼
+┌─────────────────────────┐  ┌─────────────────────────┐
+│ 7. Create GitHub Release│  │ Done (artifact only)    │
+│    Upload tarball + sha │  │                         │
+└─────────────────────────┘  └─────────────────────────┘
+```
 
-3. **Validate full dist structure:**
-   - `entry.js` present (CLI entry)
-   - `run-main.js` present (CLI runner)
-   - `index.js` present (main entry)
-   - At least one `reply-*.js` chunk
-   - `index.js` references existing reply chunk
+**Feature Validation (6 strict checks):**
 
-4. **Validate checksums:** Verify `checksums.sha256`
+| Feature | Search Pattern | Must Find |
+|---------|---------------|-----------|
+| 1. PERSONAL BUILD | `PERSONAL BUILD` + `dddabtc` | Both strings in dist/ |
+| 2. Exec guard | `Main session policy blocked` | Error message text |
+| 3. SSH block | `isSshCommand` | Function name |
+| 4. Output cap | `maxOutputBytes` / `outputCap` | Limit variable |
+| 5. Sub-agent timeout | `21600` | Timeout value |
+| 6. Control fast-path | `:control` | Lane identifier |
 
-5. **Verify features:** Check reply chunk contains:
-   - `PERSONAL BUILD` with date and link
-   - `enforceMainSessionPolicy`
-   - `sessions_spawn` (in error message)
-   - SSH block patterns
-   - `21600` (subagent timeout)
+Each validation step uses `exit 1` on failure — no silent passes.
+
+**Release Behavior:**
+- Only triggered on tag push (`overlay-v*`) or manual `publish_release: true`
+- Creates GitHub Release with release notes
+- Uploads `dist-overlay.tar.gz` and `.sha256`
+- Verifies assets are published via API
 
 ---
 

@@ -1,91 +1,189 @@
-name: Validate Overlay
+name: Build and Validate Overlay
 
 on:
   push:
     branches: [main]
+    tags: ['overlay-v*']
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      upstream_version:
+        description: 'OpenClaw version to build against (e.g., 2026.3.7)'
+        required: false
+        type: string
+      publish_release:
+        description: 'Publish to GitHub Release'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  DEFAULT_UPSTREAM_VERSION: '2026.3.7'
 
 jobs:
-  validate:
+  build-and-validate:
     runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ github.token }}
+    outputs:
+      release_tag: ${{ steps.vars.outputs.release_tag }}
+      should_release: ${{ steps.vars.outputs.should_release }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Download release artifact
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Determine versions and release mode
+        id: vars
         run: |
-          LATEST=$(gh release list -R dddabtc/openclaw-personal-overlay -L 1 --json tagName -q '.[0].tagName')
-          echo "Latest release: $LATEST"
-          if [ -z "$LATEST" ]; then
-            echo "FAIL: No release found in dddabtc/openclaw-personal-overlay"
+          set -euo pipefail
+          
+          # Determine upstream version
+          if [[ -n "${{ inputs.upstream_version }}" ]]; then
+            upstream_ver="${{ inputs.upstream_version }}"
+          else
+            upstream_ver="${DEFAULT_UPSTREAM_VERSION}"
+          fi
+          echo "upstream_version=${upstream_ver}" >> "$GITHUB_OUTPUT"
+          
+          # Determine release tag
+          release_tag="overlay-v${upstream_ver}"
+          echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
+          
+          # Determine if we should release
+          should_release="false"
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == refs/tags/overlay-v* ]]; then
+            should_release="true"
+          elif [[ "${{ inputs.publish_release }}" == "true" ]]; then
+            should_release="true"
+          fi
+          echo "should_release=${should_release}" >> "$GITHUB_OUTPUT"
+          
+          echo "Upstream version: ${upstream_ver}"
+          echo "Release tag: ${release_tag}"
+          echo "Should release: ${should_release}"
+
+      - name: Resolve compatibility target
+        id: compat
+        env:
+          UPSTREAM_VERSION: ${{ steps.vars.outputs.upstream_version }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          upstream_version = os.environ["UPSTREAM_VERSION"]
+          with open("compatibility.json", "r", encoding="utf-8") as f:
+              data = json.load(f)
+
+          supported = data.get("supported", [])
+          target = None
+
+          for entry in supported:
+              if entry.get("openclawVersion") == upstream_version and entry.get("status") != "deprecated":
+                  target = entry
+                  break
+
+          if target is None:
+              print(f"No supported compatibility entry found for upstream version {upstream_version}", file=sys.stderr)
+              sys.exit(1)
+
+          required = ["openclawVersion", "commitSha", "upstreamBaseCommit", "patchSetDir"]
+          missing = [k for k in required if not target.get(k)]
+          if missing:
+              print(f"Compatibility entry missing fields: {missing}", file=sys.stderr)
+              sys.exit(1)
+
+          out = os.environ["GITHUB_OUTPUT"]
+          with open(out, "a", encoding="utf-8") as gh:
+              gh.write(f"target_version={target['openclawVersion']}\n")
+              gh.write(f"target_commit={target['commitSha']}\n")
+              gh.write(f"upstream_base={target['upstreamBaseCommit']}\n")
+              gh.write(f"patch_set_dir={target['patchSetDir']}\n")
+          
+          print(f"Target version: {target['openclawVersion']}")
+          print(f"Upstream base commit: {target['upstreamBaseCommit']}")
+          print(f"Patch set dir: {target['patchSetDir']}")
+          PY
+
+      # ============================================================
+      # STEP 1: Checkout openclaw source
+      # ============================================================
+      - name: Clone openclaw source
+        env:
+          UPSTREAM_BASE: ${{ steps.compat.outputs.upstream_base }}
+        run: |
+          echo "Cloning openclaw at commit ${UPSTREAM_BASE}..."
+          git clone --filter=blob:none --no-checkout https://github.com/openclaw/openclaw.git /tmp/openclaw-src
+          cd /tmp/openclaw-src
+          git checkout "${UPSTREAM_BASE}"
+          echo "Checked out openclaw at $(git rev-parse --short HEAD)"
+
+      # ============================================================
+      # STEP 2: Apply patches
+      # ============================================================
+      - name: Apply patches
+        env:
+          PATCH_SET_DIR: ${{ steps.compat.outputs.patch_set_dir }}
+        run: |
+          echo "Looking for patches in ${PATCH_SET_DIR}..."
+          mapfile -t patch_files < <(find "${GITHUB_WORKSPACE}/${PATCH_SET_DIR}" -maxdepth 1 -type f -name '*.patch' | sort)
+          
+          if [ "${#patch_files[@]}" -eq 0 ]; then
+            echo "FAIL: No patch files found in ${PATCH_SET_DIR}"
             exit 1
           fi
-          gh release download "$LATEST" -R dddabtc/openclaw-personal-overlay -p 'dist-overlay.tar.gz' -D /tmp/release-assets/ || { echo "FAIL: Could not download dist-overlay.tar.gz from release $LATEST"; exit 1; }
-
-      - name: Extract overlay
-        run: |
-          mkdir -p /tmp/overlay-extract
-          tar xzf /tmp/release-assets/dist-overlay.tar.gz --strip-components=1 -C /tmp/overlay-extract
-
-      - name: Validate metadata
-        run: |
-          python3 -c "
-          import json, sys
-          m = json.load(open('/tmp/overlay-extract/metadata.json'))
-          ver = m.get('overlayVersion','')
-          # mode defaults to full-replace when not set (build-dist-overlay.sh omits it)
-          mode = m.get('mode','full-replace')
-          print(f'overlayVersion: {ver}')
-          print(f'mode: {mode}')
-          assert ver.startswith('overlay-v'), f'FAIL: overlayVersion must start with overlay-v, got {ver}'
-          assert mode == 'full-replace', f'FAIL: mode must be full-replace, got {mode}'
-          print('metadata OK')
-          "
-
-      - name: Validate overlay structure
-        run: |
-          DIST=/tmp/overlay-extract/payload/dist
-          echo "Files in dist: $(find $DIST -type f | wc -l)"
-
-          # Delta overlays only include changed chunks — entry.js, run-main, build-info
-          # are excluded or unchanged. Validate the chunks that must be present:
-
-          # index.js must be present (changed to update chunk references)
-          test -f "$DIST/index.js" || { echo "FAIL: index.js missing"; exit 1; }
-          echo "index.js: OK"
-
-          # At least one reply-*.js chunk must be present (contains exec guard + SSH block)
-          ls $DIST/reply-*.js >/dev/null 2>&1 || { echo "FAIL: reply-*.js missing"; exit 1; }
-          echo "reply chunk: OK"
-
-      - name: Validate no missing chunk references
-        run: |
-          DIST=/tmp/overlay-extract/payload/dist
-          MISSING=0
-          for chunk in $(grep -oP '"\./[^"]+\.js"' $DIST/index.js | tr -d '"' | sort -u); do
-            if [ ! -f "$DIST/$chunk" ]; then
-              echo "MISSING: $chunk"
-              MISSING=$((MISSING+1))
-            fi
-          done
-          echo "Missing chunks: $MISSING"
-          [ $MISSING -eq 0 ] || { echo "FAIL: missing chunks referenced by index.js"; exit 1; }
-          echo "chunk references: OK"
+          
+          echo "Found ${#patch_files[@]} patches:"
+          printf '  %s\n' "${patch_files[@]}"
+          
+          cd /tmp/openclaw-src
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git am "${patch_files[@]}"
+          
+          echo "✓ All patches applied successfully"
 
       # ============================================================
-      # STRICT FEATURE VALIDATION - All 7 features must be present
+      # STEP 3: Build from source
       # ============================================================
+      - name: Install dependencies
+        working-directory: /tmp/openclaw-src
+        run: pnpm install --no-frozen-lockfile
 
+      - name: Build
+        working-directory: /tmp/openclaw-src
+        run: pnpm -s build
+
+      - name: Verify dist exists
+        run: |
+          if [ ! -d /tmp/openclaw-src/dist ]; then
+            echo "FAIL: dist directory not created"
+            exit 1
+          fi
+          echo "Built dist contains $(find /tmp/openclaw-src/dist -type f | wc -l) files"
+
+      # ============================================================
+      # STEP 4: Validate all 6 features (STRICT - exit 1 on failure)
+      # ============================================================
       - name: "Feature 1: PERSONAL BUILD tag"
         run: |
-          DIST=/tmp/overlay-extract/payload/dist
-          echo "Checking PERSONAL BUILD tag in any chunk..."
+          DIST=/tmp/openclaw-src/dist
+          echo "Checking PERSONAL BUILD tag..."
           
           # Must have "PERSONAL BUILD" string
           if ! grep -rq "PERSONAL BUILD" "$DIST"; then
-            echo "FAIL: PERSONAL BUILD string not found"
+            echo "FAIL: PERSONAL BUILD string not found in dist/"
             exit 1
           fi
           echo "✓ PERSONAL BUILD found"
@@ -97,19 +195,12 @@ jobs:
           fi
           echo "✓ dddabtc link found"
           
-          # Must have date format 2026- (build date)
-          if ! grep -rq "2026-" "$DIST"; then
-            echo "FAIL: Build date (2026-) not found"
-            exit 1
-          fi
-          echo "✓ Build date found"
-          
-          echo "Feature 1: PASSED"
+          echo "Feature 1: PASSED ✓"
 
       - name: "Feature 2: Exec guard (main session policy)"
         run: |
-          DIST=/tmp/overlay-extract/payload/dist
-          echo "Checking exec guard error message..."
+          DIST=/tmp/openclaw-src/dist
+          echo "Checking exec guard..."
           
           if ! grep -rq "Main session policy blocked" "$DIST"; then
             echo "FAIL: 'Main session policy blocked' error string not found"
@@ -117,39 +208,37 @@ jobs:
           fi
           echo "✓ Exec guard error message found"
           
-          echo "Feature 2: PASSED"
+          echo "Feature 2: PASSED ✓"
 
       - name: "Feature 3: SSH block"
         run: |
-          DIST=/tmp/overlay-extract/payload/dist
+          DIST=/tmp/openclaw-src/dist
           echo "Checking SSH block logic..."
           
-          # Check for SSH blocking related strings
-          if ! grep -rqi "ssh.*block\|block.*ssh\|isSshCommand" "$DIST"; then
-            echo "FAIL: SSH block logic not found"
+          if ! grep -rqi "isSshCommand" "$DIST"; then
+            echo "FAIL: SSH block logic (isSshCommand) not found"
             exit 1
           fi
           echo "✓ SSH block logic found"
           
-          echo "Feature 3: PASSED"
+          echo "Feature 3: PASSED ✓"
 
       - name: "Feature 4: Output cap"
         run: |
-          DIST=/tmp/overlay-extract/payload/dist
+          DIST=/tmp/openclaw-src/dist
           echo "Checking output cap logic..."
           
-          # Check for output limiting related strings
-          if ! grep -rq "maxOutput\|outputBytes\|outputCap" "$DIST"; then
+          if ! grep -rq "maxOutputBytes\|outputCap\|outputLimitBytes" "$DIST"; then
             echo "FAIL: Output cap logic not found"
             exit 1
           fi
           echo "✓ Output cap logic found"
           
-          echo "Feature 4: PASSED"
+          echo "Feature 4: PASSED ✓"
 
       - name: "Feature 5: Sub-agent timeout (21600)"
         run: |
-          DIST=/tmp/overlay-extract/payload/dist
+          DIST=/tmp/openclaw-src/dist
           echo "Checking sub-agent timeout value..."
           
           if ! grep -rq "21600" "$DIST"; then
@@ -158,29 +247,68 @@ jobs:
           fi
           echo "✓ 21600 timeout found"
           
-          echo "Feature 5: PASSED"
+          echo "Feature 5: PASSED ✓"
 
       - name: "Feature 6: Control fast-path"
         run: |
-          DIST=/tmp/overlay-extract/payload/dist
+          DIST=/tmp/openclaw-src/dist
           echo "Checking control fast-path logic..."
           
-          # Check for control lane related strings
-          if ! grep -rqi "controlLane\|control.*lane\|fastPath\|fast.*path" "$DIST"; then
-            echo "FAIL: Control fast-path logic not found"
+          if ! grep -rqi ":control" "$DIST"; then
+            echo "FAIL: Control lane (:control) not found"
             exit 1
           fi
           echo "✓ Control fast-path logic found"
           
-          echo "Feature 6: PASSED"
+          echo "Feature 6: PASSED ✓"
 
-      - name: Summary
+      # ============================================================
+      # STEP 5: Package dist-overlay.tar.gz
+      # ============================================================
+      - name: Build overlay package
+        env:
+          OVERLAY_VERSION: ${{ steps.vars.outputs.release_tag }}
+          TARGET_VERSION: ${{ steps.compat.outputs.target_version }}
+          TARGET_COMMIT: ${{ steps.compat.outputs.target_commit }}
+        run: |
+          bash scripts/build-dist-overlay.sh /tmp/openclaw-src dist-overlay
+
+      - name: Verify package
+        run: |
+          if [ ! -f dist-overlay.tar.gz ]; then
+            echo "FAIL: dist-overlay.tar.gz not created"
+            exit 1
+          fi
+          if [ ! -f dist-overlay.tar.gz.sha256 ]; then
+            echo "FAIL: dist-overlay.tar.gz.sha256 not created"
+            exit 1
+          fi
+          echo "Package created:"
+          ls -lh dist-overlay.tar.gz*
+          
+          # Verify tarball contents
+          echo ""
+          echo "Tarball contents:"
+          tar tzf dist-overlay.tar.gz | head -20
+          echo "..."
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-overlay
+          path: |
+            dist-overlay.tar.gz
+            dist-overlay.tar.gz.sha256
+          retention-days: 7
+
+      - name: Validation Summary
         run: |
           echo "========================================"
-          echo "=== Overlay Validation Summary       ==="
+          echo "=== Build & Validation Summary       ==="
           echo "========================================"
-          echo "Release: latest"
-          echo "Mode: full-replace"
+          echo "Upstream version: ${{ steps.vars.outputs.upstream_version }}"
+          echo "Upstream commit:  ${{ steps.compat.outputs.upstream_base }}"
+          echo "Release tag:      ${{ steps.vars.outputs.release_tag }}"
           echo ""
           echo "Feature 1: PERSONAL BUILD tag    ✓"
           echo "Feature 2: Exec guard            ✓"
@@ -188,7 +316,89 @@ jobs:
           echo "Feature 4: Output cap            ✓"
           echo "Feature 5: Sub-agent timeout     ✓"
           echo "Feature 6: Control fast-path     ✓"
-          echo "Feature 7: Abortable retry       ✓ (built-in)"
           echo ""
-          echo "ALL 7 FEATURES VALIDATED"
+          echo "ALL 6 FEATURES VALIDATED"
           echo "========================================"
+
+  # ============================================================
+  # Release job (only on tag push or manual trigger)
+  # ============================================================
+  release:
+    needs: build-and-validate
+    if: needs.build-and-validate.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-overlay
+
+      - name: Verify assets
+        run: |
+          ls -la
+          test -f dist-overlay.tar.gz || { echo "FAIL: dist-overlay.tar.gz missing"; exit 1; }
+          test -f dist-overlay.tar.gz.sha256 || { echo "FAIL: dist-overlay.tar.gz.sha256 missing"; exit 1; }
+
+      - name: Create tag (if needed)
+        env:
+          GH_TOKEN: ${{ secrets.OC_GH_TOKEN || github.token }}
+          RELEASE_TAG: ${{ needs.build-and-validate.outputs.release_tag }}
+        run: |
+          git fetch --tags
+          if ! git rev-parse "${RELEASE_TAG}" >/dev/null 2>&1; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag "${RELEASE_TAG}"
+            git push origin "${RELEASE_TAG}"
+          fi
+
+      - name: Create/Update Release
+        env:
+          GH_TOKEN: ${{ secrets.OC_GH_TOKEN || github.token }}
+          RELEASE_TAG: ${{ needs.build-and-validate.outputs.release_tag }}
+        run: |
+          cat > /tmp/release-notes.md <<EOF
+          ## ${RELEASE_TAG}
+          
+          Built from source with all 6 personal overlay features:
+          
+          - ✓ PERSONAL BUILD tag (with dddabtc link)
+          - ✓ Exec guard (main session policy)
+          - ✓ SSH block
+          - ✓ Output cap
+          - ✓ Sub-agent timeout (21600s)
+          - ✓ Control fast-path
+          
+          **Build:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+          
+          # Create release if it doesn't exist
+          gh release view "${RELEASE_TAG}" >/dev/null 2>&1 || \
+            gh release create "${RELEASE_TAG}" \
+              --title "${RELEASE_TAG}" \
+              --notes-file /tmp/release-notes.md
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ secrets.OC_GH_TOKEN || github.token }}
+          RELEASE_TAG: ${{ needs.build-and-validate.outputs.release_tag }}
+        run: |
+          gh release upload "${RELEASE_TAG}" \
+            dist-overlay.tar.gz \
+            dist-overlay.tar.gz.sha256 \
+            --clobber
+          
+          echo "✓ Assets uploaded to release ${RELEASE_TAG}"
+
+      - name: Verify published release
+        env:
+          GH_TOKEN: ${{ secrets.OC_GH_TOKEN || github.token }}
+          RELEASE_TAG: ${{ needs.build-and-validate.outputs.release_tag }}
+        run: |
+          names="$(gh api "repos/${{ github.repository }}/releases/tags/${RELEASE_TAG}" --jq '.assets[].name')"
+          echo "Published assets:" && echo "$names"
+          echo "$names" | grep -Fx "dist-overlay.tar.gz" >/dev/null || { echo "FAIL: missing dist-overlay.tar.gz"; exit 1; }
+          echo "$names" | grep -Fx "dist-overlay.tar.gz.sha256" >/dev/null || { echo "FAIL: missing sha256"; exit 1; }
+          echo "✓ Release ${RELEASE_TAG} published successfully"
