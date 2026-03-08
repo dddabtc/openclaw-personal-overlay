@@ -355,7 +355,7 @@ regular_apply() {
   [[ -f "$overlay_dir/metadata.json" ]] || { err "invalid artifact metadata.json missing"; exit $E_BAD_ARTIFACT; }
 
   local m_ver overlay_version expected_overlay_version m_commit
-  m_ver="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["targetOpenclawVersion"])' "$overlay_dir/metadata.json")"
+  m_ver="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("baseVersion") or json.load(open(sys.argv[1])).get("targetOpenclawVersion",""))' "$overlay_dir/metadata.json")"
   overlay_version="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["overlayVersion"])' "$overlay_dir/metadata.json")"
   m_commit="$(python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(d.get("targetCommitSha",""))' "$overlay_dir/metadata.json")"
   expected_overlay_version="overlay-v${version}"
