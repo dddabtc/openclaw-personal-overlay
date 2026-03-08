@@ -1,0 +1,22 @@
+name: overlay-ci
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '15 */6 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  compatibility-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Validate compatibility matrix
+        run: python3 scripts/validate-compatibility.py compatibility.json
+      - name: Run overlay smoke tests
+        run: bash tests/openclaw-personal.test.sh
