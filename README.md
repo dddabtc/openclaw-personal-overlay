@@ -35,6 +35,10 @@ The current patch set focuses on stability and responsiveness:
 ## Installation
 
 ```bash
+# Clone the repository
+git clone https://github.com/dddabtc/openclaw-personal-overlay.git
+cd openclaw-personal-overlay
+
 # Check compatibility
 bin/openclaw-personal status
 
