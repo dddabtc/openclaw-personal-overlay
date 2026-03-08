@@ -9360,6 +9360,13 @@ const ToolExecSafeBinProfileSchema = z.object({
 	allowedValueFlags: z.array(z.string()).optional(),
 	deniedFlags: z.array(z.string()).optional()
 }).strict();
+const MainSessionPolicySchema = z.object({
+	forbidLongExec: z.boolean().optional(),
+	requireBackgroundForExec: z.boolean().optional(),
+	maxExecTimeoutSec: z.number().int().positive().optional(),
+	blockSshCommands: z.boolean().optional(),
+	maxOutputBytes: z.number().int().positive().optional()
+}).strict().optional();
 const ToolExecBaseShape = {
 	host: z.enum([
 		"sandbox",
@@ -9386,7 +9393,8 @@ const ToolExecBaseShape = {
 	cleanupMs: z.number().int().positive().optional(),
 	notifyOnExit: z.boolean().optional(),
 	notifyOnExitEmptySuccess: z.boolean().optional(),
-	applyPatch: ToolExecApplyPatchSchema
+	applyPatch: ToolExecApplyPatchSchema,
+	mainSessionPolicy: MainSessionPolicySchema
 };
 const AgentToolExecSchema = z.object({
 	...ToolExecBaseShape,
@@ -21225,7 +21233,7 @@ function sanitizeDaemonStatusForJson(status) {
 		}
 	};
 }
-const PERSONAL_BUILD_DATE = "__PERSONAL_BUILD_DATE__";
+const PERSONAL_BUILD_DATE = "2026-03-08 12:18:29";
 const PERSONAL_BUILD_REPO = "https://github.com/dddabtc";
 function printDaemonStatus(status, opts) {
 	if (opts.json) {

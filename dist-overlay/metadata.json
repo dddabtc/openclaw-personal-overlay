@@ -1,9 +1,14 @@
 {
   "format": "openclaw-personal-dist-overlay/v1",
-  "overlayVersion": "overlay-v2026.3.7",
+  "overlayVersion": "2026.3.7-personal-v2",
   "targetOpenclawVersion": "2026.3.7",
-  "targetCommitSha": "unknown",
-  "builtAt": "2026-03-08T12:57:00Z",
-  "patchCount": 4,
-  "notes": "index.js included in payload/dist/ to fix chunk reference chain"
+  "targetCommitSha": "v2026.3.7",
+  "builtAt": "2026-03-08 12:18:29Z",
+  "features": [
+    "PERSONAL_BUILD_tag_in_status",
+    "subagent_default_timeout_6h",
+    "main_session_exec_policy",
+    "main_session_ssh_block",
+    "main_session_output_cap"
+  ]
 }
