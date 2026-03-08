@@ -1,4 +1,4 @@
-From 74848e2709aa8fff58a2e565f048adabfa462e51 Mon Sep 17 00:00:00 2001
+From a37d4949b572593f015980d818572be14eb3f13a Mon Sep 17 00:00:00 2001
 From: subagent-bot <subagent-bot@example.com>
 Date: Sun, 8 Mar 2026 06:27:31 -0300
 Subject: [PATCH 8/8] feat(subagent): default runTimeoutSeconds to 6h

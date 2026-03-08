@@ -20,7 +20,7 @@
       "openclawVersion": "2026.3.7",
       "commitSha": "42a1394c5c0fb86706f61598e68e0db30e8c99c1",
       "upstreamBaseCommit": "42a1394c5c0fb86706f61598e68e0db30e8c99c1",
-      "overlayHeadCommit": "02d9e5960",
+      "overlayHeadCommit": "a37d4949b",
       "patchSetDir": "patches/e7b600e31882-autocompat",
       "binaryArtifact": "dist-overlay.tar.gz",
       "atlasCompat": {

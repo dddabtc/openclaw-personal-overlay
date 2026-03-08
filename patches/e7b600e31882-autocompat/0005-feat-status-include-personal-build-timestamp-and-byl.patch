@@ -1,0 +1,45 @@
+From 38434a9fce7ae6c47541807f9bf6314bdddba89f Mon Sep 17 00:00:00 2001
+From: subagent-bot <subagent-bot@example.com>
+Date: Sun, 8 Mar 2026 06:53:26 -0300
+Subject: [PATCH 5/8] feat(status): include personal build timestamp and byline
+
+---
+ src/auto-reply/status.ts | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/src/auto-reply/status.ts b/src/auto-reply/status.ts
+index a08931b1c..fab028bf5 100644
+--- a/src/auto-reply/status.ts
++++ b/src/auto-reply/status.ts
+@@ -57,6 +57,16 @@ type AgentConfig = Partial<AgentDefaults> & {
+ 
+ export const formatTokenCount = formatTokenCountShared;
+ 
++function resolveDistPublishDateTime(): string {
++  try {
++    const stat = fs.statSync(new URL(import.meta.url));
++    const d = new Date(stat.mtimeMs);
++    return `${d.toISOString().slice(0, 19).replace("T", " ")}(UTC)`;
++  } catch {
++    return "unknown(UTC)";
++  }
++}
++
+ type QueueStatus = {
+   mode?: string;
+   depth?: number;
+@@ -665,8 +675,11 @@ export function buildStatusMessage(args: StatusArgs): string {
+   const mediaLine = formatMediaUnderstandingLine(args.mediaDecisions);
+   const voiceLine = formatVoiceModeLine(args.config, args.sessionEntry);
+ 
++  const personalBuildLine = `🏷 PERSONAL BUILD · ${resolveDistPublishDateTime()} by: https://github.com/dddabtc`;
++
+   return [
+     versionLine,
++    personalBuildLine,
+     args.timeLine,
+     modelLine,
+     fallbackLine,
+-- 
+2.25.1
+

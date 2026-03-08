@@ -7,7 +7,7 @@ import path from "node:path";
 import fs from "node:fs";
 import chalk, { Chalk } from "chalk";
 import { Logger } from "tslog";
-import json5 from "json5";
+import JSON5 from "json5";
 import util from "node:util";
 
 //#region src/infra/home-dir.ts
@@ -687,7 +687,7 @@ function readLoggingConfig() {
 	try {
 		if (!fs.existsSync(configPath)) return;
 		const raw = fs.readFileSync(configPath, "utf-8");
-		const logging = json5.parse(raw)?.logging;
+		const logging = JSON5.parse(raw)?.logging;
 		if (!logging || typeof logging !== "object" || Array.isArray(logging)) return;
 		return logging;
 	} catch {
@@ -2627,7 +2627,7 @@ if (!isMainModule({
 			applyCliProfileEnv({ profile: parsed.profile });
 			process$1.argv = parsed.argv;
 		}
-		import("./run-main-LpgTCmi3.js").then(({ runCli }) => runCli(process$1.argv)).catch((error) => {
+		import("./run-main-CHl2GVrZ.js").then(({ runCli }) => runCli(process$1.argv)).catch((error) => {
 			console.error("[openclaw] Failed to start CLI:", error instanceof Error ? error.stack ?? error.message : error);
 			process$1.exitCode = 1;
 		});
