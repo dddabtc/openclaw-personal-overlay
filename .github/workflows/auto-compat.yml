@@ -55,14 +55,23 @@ jobs:
             const hit = result.data.items.find(i => i.title === title) || null;
             core.setOutput('has_residue', hit ? 'true' : 'false');
 
-      - name: Resolve latest upstream release
+      - name: Resolve latest upstream version from npm + verify upstream tag exists
         id: upstream
         env:
           GH_TOKEN: ${{ secrets.OC_GH_TOKEN }}
           UPSTREAM_REPO: ${{ github.event.inputs.upstream_repo || 'openclaw/openclaw' }}
         run: |
-          latest=$(gh api repos/${UPSTREAM_REPO}/releases/latest --jq '.tag_name')
-          echo "latest_tag=$latest" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          npm_latest="$(npm view openclaw version)"
+          if [ -z "$npm_latest" ]; then
+            echo "Failed to resolve latest openclaw version from npm" >&2
+            exit 1
+          fi
+
+          tag="v${npm_latest}"
+          gh api "repos/${UPSTREAM_REPO}/git/ref/tags/${tag}" >/dev/null
+
+          echo "latest_tag=${tag}" >> "$GITHUB_OUTPUT"
 
       - name: Compare compatibility support vs upstream
         id: compare
