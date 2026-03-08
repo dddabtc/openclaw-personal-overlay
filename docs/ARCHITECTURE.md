@@ -487,6 +487,46 @@ dist-overlay/
 
 **教训**：当 bundler 生成的 chunk 文件名（hash）变化时，`index.js` 必须一起更新。Diff overlay 必须包含引用关系完整的文件集合。
 
+### 2026-03-08: 改用 Full-Replace 模式（而非 Diff Overlay）
+
+**问题**：即使包含 `index.js`，diff overlay 仍然无法正常工作。原因是 Node.js 的模块系统和 bundler 的 chunk 分割机制导致复杂的依赖关系，仅替换部分文件无法可靠地改变运行时行为。
+
+**根因分析**：
+1. ESM bundler 生成的 chunk 之间有复杂的 import 关系
+2. `index.js` 是入口，但它 import 的 chunk 可能还会 import 其他 chunk
+3. 如果只替换部分 chunk，可能导致：
+   - 旧 chunk 被加载（因为引用路径没变）
+   - 新旧 chunk 混用导致不可预测的行为
+   - 某些 export 丢失或指向错误版本
+
+**决策**：**从 diff overlay 改为 full-replace overlay**
+
+**新策略**：
+- 打包完整的 `dist/` 目录（排除 `entry.js`）
+- Apply 时用 rsync 完整替换目标 dist
+- 不再做差异分析，直接全量覆盖
+
+**为什么排除 entry.js**：
+- `entry.js` 是 CLI 入口脚本，包含 shebang 和基础环境设置
+- 它不包含业务逻辑，且替换它可能破坏 PATH 或权限
+- jiti 插件系统可能依赖 entry.js 的特定行为
+
+**权衡**：
+- Overlay 体积从 ~100KB 增加到 ~19MB
+- 但更可靠、更简单、更好调试
+- 体积增加可以接受（一次性下载，GitHub Release 支持）
+
+**实现**：
+```bash
+# 打包时排除 entry.js
+rsync -a --exclude='entry.js' dist/ payload/dist/
+
+# Apply 时全量替换（不是 merge）
+rsync -a --delete --exclude='entry.js' payload/dist/ $OPENCLAW_DIST/
+```
+
+**教训**：对于复杂的 bundler 产物，差异化 overlay 的复杂度可能超过收益。Full-replace 更可靠。
+
 ---
 
 ## 11. 关键决策记录
