@@ -270,6 +270,7 @@ jobs:
           OVERLAY_VERSION: ${{ steps.vars.outputs.release_tag }}
           TARGET_VERSION: ${{ steps.compat.outputs.target_version }}
           TARGET_COMMIT: ${{ steps.compat.outputs.target_commit }}
+          FULL_REPLACE: "1"
         run: |
           bash scripts/build-dist-overlay.sh /tmp/openclaw-src dist-overlay
 

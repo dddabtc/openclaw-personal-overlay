@@ -18,6 +18,9 @@ TARGET_COMMIT="${TARGET_COMMIT:-}"
 INCLUDE_PACKAGE_JSON="${INCLUDE_PACKAGE_JSON:-0}"
 INCLUDE_PNPM_LOCK="${INCLUDE_PNPM_LOCK:-0}"
 INCLUDE_NEW_DIST_FILES="${INCLUDE_NEW_DIST_FILES:-0}"
+# full-replace mode: copy entire dist, no exclusions, no diff
+FULL_REPLACE="${FULL_REPLACE:-1}"
+# Legacy diff mode settings (ignored when FULL_REPLACE=1)
 EXCLUDE_DIST_FILES_REGEX="${EXCLUDE_DIST_FILES_REGEX:-^(entry\.js|build-info\.json)$}"
 INCLUDE_DIST_FILES_REGEX="${INCLUDE_DIST_FILES_REGEX:-\.(js|mjs|cjs|json)$}"
 
@@ -69,7 +72,14 @@ fi
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR/payload/dist"
 
-python3 - "$WORK_DIR" "$BASELINE_DIR" "$OUT_DIR" "$INCLUDE_NEW_DIST_FILES" "$EXCLUDE_DIST_FILES_REGEX" "$INCLUDE_DIST_FILES_REGEX" <<'PY'
+if [[ "$FULL_REPLACE" == "1" ]]; then
+  echo "[build-dist-overlay] FULL_REPLACE mode: copying entire dist directory"
+  cp -r "$WORK_DIR/dist/"* "$OUT_DIR/payload/dist/"
+  file_count=$(find "$OUT_DIR/payload/dist" -type f | wc -l)
+  echo "[build-dist-overlay] copied dist files: $file_count"
+else
+  # Legacy diff mode
+  python3 - "$WORK_DIR" "$BASELINE_DIR" "$OUT_DIR" "$INCLUDE_NEW_DIST_FILES" "$EXCLUDE_DIST_FILES_REGEX" "$INCLUDE_DIST_FILES_REGEX" <<'PY'
 import pathlib, re, shutil, sys
 work_dir = pathlib.Path(sys.argv[1])
 baseline_dir = pathlib.Path(sys.argv[2])
@@ -141,6 +151,7 @@ print(f"[build-dist-overlay] copied dist files: {len(selected)}")
 if not selected:
     raise SystemExit('[ERR] no dist files selected; refusing to build empty overlay')
 PY
+fi
 
 if [[ "$INCLUDE_PACKAGE_JSON" == "1" && -f "$WORK_DIR/package.json" ]]; then
   cp "$WORK_DIR/package.json" "$OUT_DIR/payload/package.json"

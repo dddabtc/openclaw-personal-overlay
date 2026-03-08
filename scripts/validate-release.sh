@@ -25,19 +25,25 @@ mkdir -p "$WORK/clean"
 (cd "$WORK/clean" && npm_config_loglevel=error npm pack openclaw@${EXPECTED_VERSION} >/dev/null && tar xzf openclaw-${EXPECTED_VERSION}.tgz)
 
 # Dist payload scope checks:
-# - entry.js must never be overlaid
+# - In diff mode: entry.js must never be overlaid
+# - In full-replace mode (FULL_REPLACE=1): entry.js MUST be present
 # - new files (not in upstream dist) are allowed only when transitively imported
 #   by another payload JS file (dependency closure), i.e. no orphan extras.
 python3 - <<PY
-import pathlib, re
+import pathlib, re, os
 base = pathlib.Path('$WORK/clean/package/dist')
 payload = pathlib.Path('$PAYLOAD/dist')
 base_set = {p.relative_to(base).as_posix() for p in base.rglob('*') if p.is_file()}
 payload_files = [p.relative_to(payload).as_posix() for p in payload.rglob('*') if p.is_file()]
 payload_set = set(payload_files)
-assert 'entry.js' not in payload_set, 'entry.js must not be overlaid'
+full_replace = os.environ.get('FULL_REPLACE', '0') == '1'
+if full_replace:
+    assert 'entry.js' in payload_set, 'FULL_REPLACE mode requires entry.js in payload'
+else:
+    assert 'entry.js' not in payload_set, 'entry.js must not be overlaid in diff mode'
 
-extra = {p for p in payload_set if p not in base_set}
+# In full-replace mode, skip orphan check (all files are intentionally included)
+extra = set() if full_replace else {p for p in payload_set if p not in base_set}
 if extra:
     import_re = re.compile(r"(?:import|export)\s+(?:[^'\";]+?from\s+)?['\"](\.[^'\"]+)['\"]|import\(['\"](\.[^'\"]+)['\"]\)")
     reverse = {e:set() for e in extra}
