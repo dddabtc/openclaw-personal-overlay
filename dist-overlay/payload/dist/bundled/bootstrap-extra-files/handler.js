@@ -1,8 +1,8 @@
-import "../../paths-CRyD285O.js";
-import { ft as isAgentBootstrapEvent, t as createSubsystemLogger } from "../../subsystem-gWhP9HUz.js";
-import { d as loadExtraBootstrapFiles, u as filterBootstrapFilesForSession } from "../../workspace-CoXkK9vh.js";
+import "../../paths-C9do7WCN.js";
+import { ft as isAgentBootstrapEvent, t as createSubsystemLogger } from "../../subsystem-DhjIxims.js";
+import { d as loadExtraBootstrapFiles, u as filterBootstrapFilesForSession } from "../../workspace-jH04VzX-.js";
 import "../../boolean-mcn6kL0s.js";
-import "../../frontmatter-DhbnPOGB.js";
+import "../../frontmatter-CYyVkHva.js";
 import { t as resolveHookConfig } from "../../config-B2xc8slk.js";
 
 //#region src/hooks/bundled/bootstrap-extra-files/handler.ts

@@ -2,7 +2,7 @@
 import "./paths-B4BZAPZh.js";
 import { B as theme, P as setVerbose, Q as tryParseLogLevel, T as toWhatsappJid, Y as ALLOWED_LOG_LEVELS, l as escapeRegExp, m as normalizeE164, n as assertWebChannel, z as isRich } from "./utils-BvKkAKT3.js";
 import "./thinking-EAliFiVK.js";
-import { Gt as createDefaultDeps, Tt as resolveCommitHash, t as getReplyFromConfig } from "./reply-DkozZzWy.js";
+import { Gt as createDefaultDeps, Tt as resolveCommitHash, t as getReplyFromConfig } from "./reply-D3stniwG.js";
 import "./agent-scope-D8gw-U5c.js";
 import { f as defaultRuntime, r as enableConsoleCapture, u as visibleWidth } from "./subsystem-Bqlcd6-a.js";
 import { n as runExec, t as runCommandWithTimeout } from "./exec-CAIB93jD.js";
@@ -112,7 +112,7 @@ import "./prompt-style-D72x12nr.js";
 import "./pairing-labels-QllVYZ19.js";
 import "./server-lifecycle-C-16QIND.js";
 import "./stagger-CPIlBwxt.js";
-import { r as waitForever, t as monitorWebChannel } from "./channel-web-BWsf5XwI.js";
+import { r as waitForever, t as monitorWebChannel } from "./channel-web-DIqRjk7x.js";
 import "./outbound-BRm7YD9c.js";
 import "./session-IWNimPCs.js";
 import "./login-D3NWwot2.js";
@@ -121,9 +121,9 @@ import { t as ensureOpenClawCliOnPath } from "./path-env-oaLXdtbY.js";
 import { t as assertSupportedRuntime } from "./runtime-guard-Bnl_480k.js";
 import "./ports-CnB7Ylfv.js";
 import { a as hasFlag, i as getVerboseFlag, n as getCommandPath, o as hasHelpOrVersion, s as hasRootVersionAlias } from "./argv-CN60i8bt.js";
-import { i as getCoreCliCommandsWithSubcommands, n as setProgramContext, o as registerProgramCommands, s as getSubCliCommandsWithSubcommands } from "./program-context-Bl1n-K2Z.js";
-import "./plugin-registry-_hhO3lwD.js";
-import { n as resolveCliChannelOptions } from "./channel-options-2Ivczvj0.js";
+import { i as getCoreCliCommandsWithSubcommands, n as setProgramContext, o as registerProgramCommands, s as getSubCliCommandsWithSubcommands } from "./program-context-B5IYQEpP.js";
+import "./plugin-registry-C79tsPYs.js";
+import { n as resolveCliChannelOptions } from "./channel-options-BfwnCyh5.js";
 import process$1 from "node:process";
 import { fileURLToPath } from "node:url";
 import { Command, InvalidArgumentError } from "commander";
@@ -549,7 +549,7 @@ function registerPreActionHooks(program, programVersion) {
 			commandPath
 		});
 		if (PLUGIN_REQUIRED_COMMANDS.has(commandPath[0])) {
-			const { ensurePluginRegistryLoaded } = await import("./plugin-registry-_hhO3lwD.js").then((n) => n.n);
+			const { ensurePluginRegistryLoaded } = await import("./plugin-registry-C79tsPYs.js").then((n) => n.n);
 			ensurePluginRegistryLoaded();
 		}
 	});
