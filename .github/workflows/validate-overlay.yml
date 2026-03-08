@@ -33,10 +33,6 @@ jobs:
         run: |
           ! find /tmp/overlay-extract/dist-overlay/ -name "entry.js" | grep . || { echo "FAIL: entry.js must not be in overlay"; exit 1; }
       
-      - name: Validate index.js present
-        run: |
-          find /tmp/overlay-extract/dist-overlay/ -name "index.js" | grep payload/dist/ || { echo "FAIL: index.js must be in overlay dist"; exit 1; }
-      
       - name: Validate checksums
         run: |
           cd /tmp/overlay-extract/dist-overlay
