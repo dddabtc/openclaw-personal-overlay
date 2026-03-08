@@ -24,11 +24,9 @@ on:
         required: false
         type: string
         default: manual
-  push:
-    tags:
-      - 'overlay-v*'
-  release:
-    types: [published]
+  # Removed push.tags and release triggers to prevent circular re-triggering
+  # when this workflow itself creates tags/releases via OC_GH_TOKEN.
+  # Use workflow_call (from watch.yml) or workflow_dispatch instead.
 
 permissions:
   contents: write
@@ -49,7 +47,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.ref_name }}
+          ref: main
           token: ${{ secrets.OC_GH_TOKEN }}
 
       - name: Normalize release tag
