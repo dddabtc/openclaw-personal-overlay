@@ -1,35 +1,18 @@
-From 6867589d1075647e52b015be8380bcdad2bfcfb1 Mon Sep 17 00:00:00 2001
+From eaa10cf61a71bb51316d83d9e0f531de3cb6cdd5 Mon Sep 17 00:00:00 2001
 From: subagent-bot <subagent-bot@example.com>
-Date: Tue, 3 Mar 2026 20:51:49 -0400
-Subject: [PATCH] feat(exec): add session maxOutputBytes policy and
- main-session output cap
+Date: Sun, 8 Mar 2026 06:27:28 -0300
+Subject: [PATCH 7/8] feat(exec): add session maxOutputBytes policy
 
 ---
- docs/tools/exec.md                            |  2 +
- src/agents/bash-tools.exec-types.ts           | 11 ++++
- ...ash-tools.exec.main-session-policy.test.ts | 21 +++++++
- src/agents/bash-tools.exec.ts                 | 60 ++++++++++++++++++-
- src/agents/pi-tools.ts                        |  2 +
- src/config/schema.ts                          |  6 ++
- src/config/types.openclaw.ts                  |  4 ++
- src/config/zod-schema.ts                      |  7 +++
- 8 files changed, 111 insertions(+), 2 deletions(-)
+ src/agents/bash-tools.exec-types.ts | 11 ++++++
+ src/agents/bash-tools.exec.ts       | 58 ++++++++++++++++++++++++++++-
+ src/agents/pi-tools.ts              |  3 ++
+ src/config/types.openclaw.ts        |  4 ++
+ src/config/zod-schema.ts            |  7 ++++
+ 5 files changed, 81 insertions(+), 2 deletions(-)
 
-diff --git a/docs/tools/exec.md b/docs/tools/exec.md
-index 822717f..849241b 100644
---- a/docs/tools/exec.md
-+++ b/docs/tools/exec.md
-@@ -59,6 +59,8 @@ Notes:
- - `tools.exec.safeBins`: stdin-only safe binaries that can run without explicit allowlist entries. For behavior details, see [Safe bins](/tools/exec-approvals#safe-bins-stdin-only).
- - `tools.exec.safeBinTrustedDirs`: additional explicit directories trusted for `safeBins` path checks. `PATH` entries are never auto-trusted. Built-in defaults are `/bin` and `/usr/bin`.
- - `tools.exec.safeBinProfiles`: optional custom argv policy per safe bin (`minPositional`, `maxPositional`, `allowedValueFlags`, `deniedFlags`).
-+- `sessionPolicies.main.maxOutputBytes` (default: `102400`): cap exec output bytes injected into main-session context.
-+- `sessionPolicies.subagent.maxOutputBytes` (default: `0`): cap exec output bytes injected into sub-agent context (`0` means unlimited).
- 
- Example:
- 
 diff --git a/src/agents/bash-tools.exec-types.ts b/src/agents/bash-tools.exec-types.ts
-index ad94fd6..7a9967b 100644
+index 5f62df254..f0ded01ff 100644
 --- a/src/agents/bash-tools.exec-types.ts
 +++ b/src/agents/bash-tools.exec-types.ts
 @@ -6,6 +6,16 @@ export type ExecMainSessionPolicy = {
@@ -49,7 +32,7 @@ index ad94fd6..7a9967b 100644
  };
  
  export type ExecToolDefaults = {
-@@ -31,6 +41,7 @@ export type ExecToolDefaults = {
+@@ -34,6 +44,7 @@ export type ExecToolDefaults = {
    notifyOnExitEmptySuccess?: boolean;
    cwd?: string;
    mainSessionPolicy?: ExecMainSessionPolicy;
@@ -57,38 +40,8 @@ index ad94fd6..7a9967b 100644
  };
  
  export type ExecElevatedDefaults = {
-diff --git a/src/agents/bash-tools.exec.main-session-policy.test.ts b/src/agents/bash-tools.exec.main-session-policy.test.ts
-index 7c6618c..b3a4974 100644
---- a/src/agents/bash-tools.exec.main-session-policy.test.ts
-+++ b/src/agents/bash-tools.exec.main-session-policy.test.ts
-@@ -52,4 +52,25 @@ describe("exec main-session long-run guard", () => {
-       }),
-     ).rejects.toThrow("Main session policy blocked exec");
-   });
-+
-+  it("truncates main-session exec output by maxOutputBytes", async () => {
-+    const tool = createExecTool({
-+      sessionKey: "agent:alpha:main",
-+      sessionPolicies: {
-+        main: {
-+          maxOutputBytes: 20,
-+        },
-+      },
-+    });
-+
-+    const result = await tool.execute("call-truncate", {
-+      command: "python3 -c 'print("x"*200)'",
-+      timeout: 30,
-+      yieldMs: 1000,
-+    });
-+
-+    expect(result.details.status).toBe("completed");
-+    expect((result.details as { aggregated: string }).aggregated).toContain("…(truncated,");
-+  });
-+
- });
 diff --git a/src/agents/bash-tools.exec.ts b/src/agents/bash-tools.exec.ts
-index 750843f..8926dc7 100644
+index a3aca1df3..af3f3e827 100644
 --- a/src/agents/bash-tools.exec.ts
 +++ b/src/agents/bash-tools.exec.ts
 @@ -32,6 +32,7 @@ import {
@@ -107,11 +60,10 @@ index 750843f..8926dc7 100644
    ExecToolDefaults,
    ExecToolDetails,
  } from "./bash-tools.exec-types.js";
-@@ -173,6 +175,51 @@ function isSshLikeExecCommand(command: string): boolean {
+@@ -174,6 +176,49 @@ function isSshLikeExecCommand(command: string): boolean {
    return /^(?:ssh|scp|sftp)\b/i.test(trimmed);
  }
  
-+
 +function resolveSessionMaxOutputBytes(params: {
 +  sessionPolicies?: ExecSessionPolicies;
 +  mainSessionPolicy?: ExecMainSessionPolicy;
@@ -139,8 +91,7 @@ index 750843f..8926dc7 100644
 +  if (size <= maxBytes) {
 +    return source;
 +  }
-+  const suffix = `
-+…(truncated, ${size} bytes → ${maxBytes} bytes. Use sub-agent for full output.)`;
++  const suffix = `\n…(truncated, ${size} bytes → ${maxBytes} bytes. Use sub-agent for full output.)`;
 +  const budget = Math.max(0, maxBytes - Buffer.byteLength(suffix, "utf8"));
 +  let low = 0;
 +  let high = source.length;
@@ -159,7 +110,7 @@ index 750843f..8926dc7 100644
  export function createExecTool(
    defaults?: ExecToolDefaults,
    // oxlint-disable-next-line typescript/no-explicit-any
-@@ -281,6 +328,11 @@ export function createExecTool(
+@@ -282,6 +327,11 @@ export function createExecTool(
  
        const maxOutput = DEFAULT_MAX_OUTPUT;
        const pendingMaxOutput = DEFAULT_PENDING_MAX_OUTPUT;
@@ -171,7 +122,7 @@ index 750843f..8926dc7 100644
        const warnings: string[] = [];
        let execCommandOverride: string | undefined;
        const backgroundRequested = params.background === true;
-@@ -609,18 +661,22 @@ export function createExecTool(
+@@ -619,18 +669,22 @@ export function createExecTool(
                reject(new Error(outcome.reason ?? "Command failed."));
                return;
              }
@@ -197,18 +148,19 @@ index 750843f..8926dc7 100644
                },
              });
 diff --git a/src/agents/pi-tools.ts b/src/agents/pi-tools.ts
-index 615234a..9d11100 100644
+index b85798a92..61d9a4dbb 100644
 --- a/src/agents/pi-tools.ts
 +++ b/src/agents/pi-tools.ts
-@@ -147,6 +147,7 @@ function resolveExecConfig(params: { cfg?: OpenClawConfig; agentId?: string }) {
+@@ -155,6 +155,8 @@ function resolveExecConfig(params: { cfg?: OpenClawConfig; agentId?: string }) {
+     notifyOnExitEmptySuccess:
        agentExec?.notifyOnExitEmptySuccess ?? globalExec?.notifyOnExitEmptySuccess,
      applyPatch: agentExec?.applyPatch ?? globalExec?.applyPatch,
-     mainSessionPolicy: cfg?.sessionPolicies?.main,
++    mainSessionPolicy: cfg?.sessionPolicies?.main,
 +    sessionPolicies: cfg?.sessionPolicies,
    };
  }
  
-@@ -410,6 +411,7 @@ export function createOpenClawCodingTools(options?: {
+@@ -431,6 +433,7 @@ export function createOpenClawCodingTools(options?: {
      notifyOnExitEmptySuccess:
        options?.exec?.notifyOnExitEmptySuccess ?? execConfig.notifyOnExitEmptySuccess,
      mainSessionPolicy: options?.exec?.mainSessionPolicy ?? execConfig.mainSessionPolicy,
@@ -216,35 +168,11 @@ index 615234a..9d11100 100644
      sandbox: sandbox
        ? {
            containerName: sandbox.containerName,
-diff --git a/src/config/schema.ts b/src/config/schema.ts
-index 024e8a6..2729ba4 100644
---- a/src/config/schema.ts
-+++ b/src/config/schema.ts
-@@ -307,6 +307,8 @@ const FIELD_LABELS: Record<string, string> = {
-   "sessionPolicies.main.forbidLongExec": "Main Session Exec Long-Run Guard",
-   "sessionPolicies.main.requireBackgroundForExec": "Main Session Exec Requires Background",
-   "sessionPolicies.main.maxExecTimeoutSec": "Main Session Exec Max Timeout (sec)",
-+  "sessionPolicies.main.maxOutputBytes": "Main Session Exec Max Output (bytes)",
-+  "sessionPolicies.subagent.maxOutputBytes": "Sub-agent Exec Max Output (bytes)",
-   "messages.ackReaction": "Ack Reaction Emoji",
-   "messages.ackReactionScope": "Ack Reaction Scope",
-   "messages.inbound.debounceMs": "Inbound Message Debounce (ms)",
-@@ -660,6 +662,10 @@ const FIELD_HELP: Record<string, string> = {
-     "When true, main-session exec must use background mode when the guard is enabled (default: false).",
-   "sessionPolicies.main.maxExecTimeoutSec":
-     "Maximum timeout (seconds) allowed for main-session exec when the guard is enabled (default: 120).",
-+  "sessionPolicies.main.maxOutputBytes":
-+    "Maximum exec tool output bytes persisted in main sessions before truncation (default: 102400).",
-+  "sessionPolicies.subagent.maxOutputBytes":
-+    "Maximum exec tool output bytes persisted in sub-agent sessions before truncation (default: 0 = unlimited).",
-   "commands.config": "Allow /config chat command to read/write config on disk (default: false).",
-   "commands.debug": "Allow /debug chat command for runtime-only overrides (default: false).",
-   "commands.restart": "Allow /restart and gateway restart tool actions (default: false).",
 diff --git a/src/config/types.openclaw.ts b/src/config/types.openclaw.ts
-index ae27ce3..225637b 100644
+index 38efa88a9..b846c545d 100644
 --- a/src/config/types.openclaw.ts
 +++ b/src/config/types.openclaw.ts
-@@ -115,6 +115,10 @@ export type OpenClawConfig = {
+@@ -125,6 +125,10 @@ export type OpenClawConfig = {
        forbidLongExec?: boolean;
        requireBackgroundForExec?: boolean;
        maxExecTimeoutSec?: number;
@@ -256,10 +184,10 @@ index ae27ce3..225637b 100644
    };
  };
 diff --git a/src/config/zod-schema.ts b/src/config/zod-schema.ts
-index c0d76be..ca344d0 100644
+index 7a541674c..5803d160f 100644
 --- a/src/config/zod-schema.ts
 +++ b/src/config/zod-schema.ts
-@@ -370,6 +370,13 @@ export const OpenClawSchema = z
+@@ -443,6 +443,13 @@ export const OpenClawSchema = z
              forbidLongExec: z.boolean().optional(),
              requireBackgroundForExec: z.boolean().optional(),
              maxExecTimeoutSec: z.number().int().positive().optional(),

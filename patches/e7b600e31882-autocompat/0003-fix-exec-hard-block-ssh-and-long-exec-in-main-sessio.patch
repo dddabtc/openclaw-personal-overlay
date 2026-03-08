@@ -1,7 +1,7 @@
-From 9b7b873659fd4dc999aabcecbc85c6cac775cd37 Mon Sep 17 00:00:00 2001
+From 7f1ab4f3de2301338d923d4388480351534a0775 Mon Sep 17 00:00:00 2001
 From: dddabtc <zhaodali78@gmail.com>
 Date: Sun, 22 Feb 2026 14:23:17 -0400
-Subject: [PATCH 14/16] fix(exec): hard-block ssh and long exec in main session
+Subject: [PATCH 3/8] fix(exec): hard-block ssh and long exec in main session
  policy
 
 ---
@@ -36,10 +36,10 @@ index 567311829..7c6618c67 100644
 +  });
  });
 diff --git a/src/agents/bash-tools.exec.ts b/src/agents/bash-tools.exec.ts
-index ca6911a8c..750843fda 100644
+index c2ca8a3fa..a3aca1df3 100644
 --- a/src/agents/bash-tools.exec.ts
 +++ b/src/agents/bash-tools.exec.ts
-@@ -164,6 +164,15 @@ function resolveMainSessionMaxExecTimeoutSec(policy?: ExecMainSessionPolicy) {
+@@ -165,6 +165,15 @@ function resolveMainSessionMaxExecTimeoutSec(policy?: ExecMainSessionPolicy) {
    return Math.floor(raw);
  }
  
@@ -55,7 +55,7 @@ index ca6911a8c..750843fda 100644
  export function createExecTool(
    defaults?: ExecToolDefaults,
    // oxlint-disable-next-line typescript/no-explicit-any
-@@ -256,11 +265,15 @@ export function createExecTool(
+@@ -257,11 +266,15 @@ export function createExecTool(
          const longExecByForeground =
            !backgroundRequestedByPolicy &&
            (mainSessionPolicy.requireBackgroundForExec || yieldExceedsLimit);

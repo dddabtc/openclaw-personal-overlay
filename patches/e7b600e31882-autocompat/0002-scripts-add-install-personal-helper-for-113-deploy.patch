@@ -1,7 +1,7 @@
-From 29c264dfdb263f6b1ab88c9861d8a57ebdd96e5f Mon Sep 17 00:00:00 2001
+From 66f31c690a809daa1e6b21659388043a19eb29c9 Mon Sep 17 00:00:00 2001
 From: zhaod <zhaod@local>
 Date: Fri, 20 Feb 2026 13:03:55 -0400
-Subject: [PATCH 04/16] scripts: add install-personal helper for 113 deploy
+Subject: [PATCH 2/8] scripts: add install-personal helper for 113 deploy
 
 ---
  scripts/install-personal.sh | 32 ++++++++++++++++++++++++++++++++

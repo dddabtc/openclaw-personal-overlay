@@ -1,22 +1,22 @@
-From de94e3cdda14690a964ede9983fc902f8f3c0be7 Mon Sep 17 00:00:00 2001
+From 7a05b0c9da5496468a0d214c9de7578b741b5d3a Mon Sep 17 00:00:00 2001
 From: dddabtc <zhaodali78@gmail.com>
 Date: Thu, 19 Feb 2026 00:26:43 -0400
-Subject: [PATCH 01/16] feat(exec): guard long exec in main sessions via policy
+Subject: [PATCH 1/8] feat(exec): guard long exec in main sessions via policy
 
 ---
  src/agents/bash-tools.exec-types.ts           |   7 +
  ...ash-tools.exec.main-session-policy.test.ts |  38 +
- src/agents/bash-tools.exec.ts                 |  40 +
+ src/agents/bash-tools.exec.ts                 |  41 +
  src/agents/pi-tools-agent-config.test.ts      |  26 +
  src/agents/pi-tools.ts                        |  14 +
  src/config/schema.ts                          | 761 ++++++++++++++++++
  src/config/types.openclaw.ts                  |   7 +
  src/config/zod-schema.ts                      |  13 +
- 8 files changed, 906 insertions(+)
+ 8 files changed, 907 insertions(+)
  create mode 100644 src/agents/bash-tools.exec.main-session-policy.test.ts
 
 diff --git a/src/agents/bash-tools.exec-types.ts b/src/agents/bash-tools.exec-types.ts
-index 24227a134..ad94fd67f 100644
+index bef8ea4bf..5f62df254 100644
 --- a/src/agents/bash-tools.exec-types.ts
 +++ b/src/agents/bash-tools.exec-types.ts
 @@ -2,6 +2,12 @@ import type { ExecAsk, ExecHost, ExecSecurity } from "../infra/exec-approvals.js
@@ -32,7 +32,7 @@ index 24227a134..ad94fd67f 100644
  export type ExecToolDefaults = {
    host?: ExecHost;
    security?: ExecSecurity;
-@@ -24,6 +30,7 @@ export type ExecToolDefaults = {
+@@ -27,6 +33,7 @@ export type ExecToolDefaults = {
    notifyOnExit?: boolean;
    notifyOnExitEmptySuccess?: boolean;
    cwd?: string;
@@ -85,7 +85,7 @@ index 000000000..567311829
 +  });
 +});
 diff --git a/src/agents/bash-tools.exec.ts b/src/agents/bash-tools.exec.ts
-index fac68eb82..ca6911a8c 100644
+index 8a0bd3090..c2ca8a3fa 100644
 --- a/src/agents/bash-tools.exec.ts
 +++ b/src/agents/bash-tools.exec.ts
 @@ -31,6 +31,7 @@ import {
@@ -126,7 +126,7 @@ index fac68eb82..ca6911a8c 100644
  export function createExecTool(
    defaults?: ExecToolDefaults,
    // oxlint-disable-next-line typescript/no-explicit-any
-@@ -226,6 +242,30 @@ export function createExecTool(
+@@ -226,6 +243,30 @@ export function createExecTool(
          throw new Error("Provide a command to start.");
        }
  
@@ -158,10 +158,10 @@ index fac68eb82..ca6911a8c 100644
        const pendingMaxOutput = DEFAULT_PENDING_MAX_OUTPUT;
        const warnings: string[] = [];
 diff --git a/src/agents/pi-tools-agent-config.test.ts b/src/agents/pi-tools-agent-config.test.ts
-index cf3182399..5cb5eb0c2 100644
+index e24186e0b..1870488b0 100644
 --- a/src/agents/pi-tools-agent-config.test.ts
 +++ b/src/agents/pi-tools-agent-config.test.ts
-@@ -742,4 +742,30 @@ describe("Agent-specific tool filtering", () => {
+@@ -746,4 +746,30 @@ describe("Agent-specific tool filtering", () => {
      const details = result?.details as { status?: string } | undefined;
      expect(details?.status).toBe("completed");
    });
@@ -193,10 +193,10 @@ index cf3182399..5cb5eb0c2 100644
 +  });
  });
 diff --git a/src/agents/pi-tools.ts b/src/agents/pi-tools.ts
-index 15be5766c..807a21c8e 100644
+index 543a163ab..b85798a92 100644
 --- a/src/agents/pi-tools.ts
 +++ b/src/agents/pi-tools.ts
-@@ -173,6 +173,19 @@ export function resolveToolLoopDetectionConfig(params: {
+@@ -182,6 +182,19 @@ export function resolveToolLoopDetectionConfig(params: {
        ...global.detectors,
        ...agent.detectors,
      },
@@ -216,7 +216,7 @@ index 15be5766c..807a21c8e 100644
    };
  }
  
-@@ -408,6 +421,7 @@ export function createOpenClawCodingTools(options?: {
+@@ -417,6 +430,7 @@ export function createOpenClawCodingTools(options?: {
      notifyOnExit: options?.exec?.notifyOnExit ?? execConfig.notifyOnExit,
      notifyOnExitEmptySuccess:
        options?.exec?.notifyOnExitEmptySuccess ?? execConfig.notifyOnExitEmptySuccess,
@@ -225,10 +225,10 @@ index 15be5766c..807a21c8e 100644
        ? {
            containerName: sandbox.containerName,
 diff --git a/src/config/schema.ts b/src/config/schema.ts
-index d2add2c96..f30e4db02 100644
+index 83227a375..a445c9508 100644
 --- a/src/config/schema.ts
 +++ b/src/config/schema.ts
-@@ -11,6 +11,767 @@ export type ConfigSchema = ReturnType<typeof OpenClawSchema.toJSONSchema>;
+@@ -12,6 +12,767 @@ export type ConfigSchema = ReturnType<typeof OpenClawSchema.toJSONSchema>;
  
  type JsonSchemaNode = Record<string, unknown>;
  
@@ -997,10 +997,10 @@ index d2add2c96..f30e4db02 100644
    type?: string | string[];
    properties?: Record<string, JsonSchemaObject>;
 diff --git a/src/config/types.openclaw.ts b/src/config/types.openclaw.ts
-index f6e94c45f..ae27ce382 100644
+index 3d1f0a900..38efa88a9 100644
 --- a/src/config/types.openclaw.ts
 +++ b/src/config/types.openclaw.ts
-@@ -110,6 +110,13 @@ export type OpenClawConfig = {
+@@ -120,6 +120,13 @@ export type OpenClawConfig = {
    talk?: TalkConfig;
    gateway?: GatewayConfig;
    memory?: MemoryConfig;
@@ -1015,10 +1015,10 @@ index f6e94c45f..ae27ce382 100644
  
  export type ConfigValidationIssue = {
 diff --git a/src/config/zod-schema.ts b/src/config/zod-schema.ts
-index 30e8c2e80..c0d76bea6 100644
+index 5148704a1..7a541674c 100644
 --- a/src/config/zod-schema.ts
 +++ b/src/config/zod-schema.ts
-@@ -363,6 +363,19 @@ export const OpenClawSchema = z
+@@ -436,6 +436,19 @@ export const OpenClawSchema = z
      commands: CommandsSchema,
      approvals: ApprovalsSchema,
      session: SessionSchema,
