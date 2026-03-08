@@ -1,11 +1,11 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: subagent-bot <subagent-bot@example.com>
-Date: Sun, 8 Mar 2026 06:53:26 -0300
+Date: Sun, 8 Mar 2026 06:58:28 -0300
 Subject: [PATCH 5/8] feat(status): include personal build timestamp and byline
 
 
 diff --git a/src/auto-reply/status.ts b/src/auto-reply/status.ts
-index a08931b1c1cc974beeb25f0bf4358f8deedae771..51c36fdf87eb5037420b5489743ab07d3c426f01 100644
+index a08931b1c1cc974beeb25f0bf4358f8deedae771..fab028bf5ac03b4133d0dcdcb4fd5ba8779d603c 100644
 --- a/src/auto-reply/status.ts
 +++ b/src/auto-reply/status.ts
 @@ -57,6 +57,16 @@ type AgentConfig = Partial<AgentDefaults> & {
@@ -29,7 +29,7 @@ index a08931b1c1cc974beeb25f0bf4358f8deedae771..51c36fdf87eb5037420b5489743ab07d
    const mediaLine = formatMediaUnderstandingLine(args.mediaDecisions);
    const voiceLine = formatVoiceModeLine(args.config, args.sessionEntry);
  
-+  const personalBuildLine = `🏷 PERSONAL BUILD · ${resolveDistPublishDateTime()}\nby: https://github.com/dddabtc`;
++  const personalBuildLine = `🏷 PERSONAL BUILD · ${resolveDistPublishDateTime()} by: https://github.com/dddabtc`;
 +
    return [
      versionLine,

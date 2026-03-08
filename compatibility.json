@@ -171,5 +171,6 @@
       "patches/083298ab9da9-to-91e0ffcfd080/experimental-zmq"
     ],
     "note": "ZMQ layer is optional/experimental and excluded (disabled) in the default overlay patch queue."
-  }
+  },
+  "overlayHeadCommit": "a37d4949b"
 }

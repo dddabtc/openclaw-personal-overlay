@@ -24,19 +24,6 @@ index 8f7c41866fee0b7fbe43a5cdfcdd00f6f8bc18a8..2a346d79a98591a85ef899b9c79c9231
    const runTimeoutSeconds =
      typeof params.runTimeoutSeconds === "number" && Number.isFinite(params.runTimeoutSeconds)
        ? Math.max(0, Math.floor(params.runTimeoutSeconds))
-diff --git a/src/auto-reply/status.ts b/src/auto-reply/status.ts
-index 51c36fdf87eb5037420b5489743ab07d3c426f01..7d559e17ecb90c829a3fc4dc39771bc827534d6f 100644
---- a/src/auto-reply/status.ts
-+++ b/src/auto-reply/status.ts
-@@ -675,7 +675,7 @@ export function buildStatusMessage(args: StatusArgs): string {
-   const mediaLine = formatMediaUnderstandingLine(args.mediaDecisions);
-   const voiceLine = formatVoiceModeLine(args.config, args.sessionEntry);
- 
--  const personalBuildLine = `🏷 PERSONAL BUILD · ${resolveDistPublishDateTime()}\nby: https://github.com/dddabtc`;
-+  const personalBuildLine = `🏷 PERSONAL BUILD · ${resolveDistPublishDateTime()}\nhttps://github.com/dddabtc`;
- 
-   return [
-     versionLine,
 diff --git a/src/config/types.agent-defaults.ts b/src/config/types.agent-defaults.ts
 index a242d0bbcc1ed0751296acf539a79178452a1494..9acafd332848efb02c8c26032c612d6355dd9c94 100644
 --- a/src/config/types.agent-defaults.ts
