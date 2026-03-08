@@ -382,9 +382,9 @@ regular_apply() {
   log "backing up entire dist/ to $backup_dir"
   cp -a "$install_root/dist" "$backup_dir/dist"
 
-  # 2. Remove all files in dist/ EXCEPT entry.js and run-main-*.js (startup chain)
-  log "clearing dist/ (preserving entry.js, run-main-*.js)"
-  find "$install_root/dist" -type f ! -name 'entry.js' ! -name 'run-main-*.js' -delete
+  # 2. Remove all files in dist/ (full replacement)
+  log "clearing dist/ (full replacement)"
+  find "$install_root/dist" -type f -delete
   find "$install_root/dist" -type d -empty -delete 2>/dev/null || true
 
   # 3. Copy overlay's dist/
