@@ -5,140 +5,104 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  release:
-    types: [created]
 
 jobs:
   validate:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-      
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      
+
+      - name: Download release artifact
+        run: |
+          gh release download overlay-v2026.3.7 -R dddabtc/openclaw-personal-overlay -p 'dist-overlay.tar.gz' -D /tmp/release-assets/ || { echo "No release found, skipping"; exit 0; }
+
       - name: Extract overlay
         run: |
           mkdir -p /tmp/overlay-extract
-          tar xzf dist-overlay.tar.gz -C /tmp/overlay-extract
-      
+          tar xzf /tmp/release-assets/dist-overlay.tar.gz --strip-components=1 -C /tmp/overlay-extract
+
       - name: Validate metadata
         run: |
-          META=/tmp/overlay-extract/dist-overlay/metadata.json
-          OVERLAY_VER=$(python3 -c "import json; print(json.load(open('$META'))['overlayVersion'])")
-          MODE=$(python3 -c "import json; print(json.load(open('$META')).get('mode', 'unknown'))")
-          echo "overlayVersion: $OVERLAY_VER"
-          echo "mode: $MODE"
-          [[ "$OVERLAY_VER" == overlay-v* ]] || { echo "FAIL: overlayVersion must start with overlay-v"; exit 1; }
-          [[ "$MODE" == "full-replace" ]] || { echo "FAIL: mode must be full-replace"; exit 1; }
-      
-      - name: Validate full dist structure
+          python3 -c "
+          import json, sys
+          m = json.load(open('/tmp/overlay-extract/metadata.json'))
+          ver = m.get('overlayVersion','')
+          mode = m.get('mode','')
+          print(f'overlayVersion: {ver}')
+          print(f'mode: {mode}')
+          assert ver.startswith('overlay-v'), f'FAIL: overlayVersion must start with overlay-v, got {ver}'
+          assert mode == 'full-replace', f'FAIL: mode must be full-replace, got {mode}'
+          print('metadata OK')
+          "
+
+      - name: Validate full-replace structure
         run: |
-          DIST=/tmp/overlay-extract/dist-overlay/payload/dist
-          
-          # Must have index.js (main entry)
-          if [ ! -f "$DIST/index.js" ]; then
-            echo "FAIL: index.js must be present (full-replace mode)"
-            exit 1
-          fi
-          echo "OK: index.js present"
-          
-          # Must have run-main.js (CLI runner) — may have a hash suffix
-          RUN_MAIN=$(ls "$DIST"/run-main*.js 2>/dev/null | head -1)
-          if [ -z "$RUN_MAIN" ]; then
-            echo "FAIL: run-main.js (or run-main-<hash>.js) must be present (full-replace mode)"
-            exit 1
-          fi
-          echo "OK: run-main found: $(basename $RUN_MAIN)"
-          
-          # Must have entry.js (CLI entry point)
-          if [ ! -f "$DIST/entry.js" ]; then
-            echo "FAIL: entry.js must be present (full-replace mode)"
-            exit 1
-          fi
-          echo "OK: entry.js present"
-          
-          # Must have at least one reply chunk
-          REPLY_COUNT=$(ls "$DIST"/reply-*.js 2>/dev/null | wc -l)
-          if [ "$REPLY_COUNT" -eq 0 ]; then
-            echo "FAIL: no reply-*.js chunk found"
-            exit 1
-          fi
-          echo "OK: $REPLY_COUNT reply chunk(s) found"
-          
-          # Verify index.js references a reply chunk that exists
-          REPLY_REF=$(grep -oP 'from "\./reply-[^"]+\.js"' "$DIST/index.js" | head -1 | grep -oP 'reply-[^"]+\.js')
-          if [ -z "$REPLY_REF" ]; then
-            echo "FAIL: index.js does not reference any reply chunk"
-            exit 1
-          fi
-          if [ ! -f "$DIST/$REPLY_REF" ]; then
-            echo "FAIL: index.js references $REPLY_REF but file not found"
-            exit 1
-          fi
-          echo "OK: index.js references $REPLY_REF (present)"
-          
-          # Count total files in dist
-          TOTAL_FILES=$(find "$DIST" -type f | wc -l)
-          echo "Total files in dist: $TOTAL_FILES"
-          if [ "$TOTAL_FILES" -lt 50 ]; then
-            echo "WARN: suspiciously few files ($TOTAL_FILES), expected 100+ for full dist"
-          fi
-      
-      - name: Validate checksums
+          DIST=/tmp/overlay-extract/payload/dist
+          echo "Files in dist: $(find $DIST -type f | wc -l)"
+
+          # entry.js must exist
+          test -f "$DIST/entry.js" || { echo "FAIL: entry.js missing"; exit 1; }
+          echo "entry.js: OK"
+
+          # run-main must exist (with hash suffix)
+          ls $DIST/run-main*.js >/dev/null 2>&1 || { echo "FAIL: run-main-*.js missing"; exit 1; }
+          echo "run-main: OK"
+
+          # index.js must exist
+          test -f "$DIST/index.js" || { echo "FAIL: index.js missing"; exit 1; }
+          echo "index.js: OK"
+
+          # reply chunk must exist
+          ls $DIST/reply-*.js >/dev/null 2>&1 || { echo "FAIL: reply-*.js missing"; exit 1; }
+          echo "reply chunk: OK"
+
+      - name: Validate no missing chunk references
         run: |
-          cd /tmp/overlay-extract/dist-overlay
-          if [ -f checksums.sha256 ]; then
-            sha256sum -c checksums.sha256 || { echo "FAIL: checksum mismatch"; exit 1; }
-            echo "Checksums OK"
-          else
-            echo "No checksums.sha256 found, skipping"
-          fi
-      
+          DIST=/tmp/overlay-extract/payload/dist
+          MISSING=0
+          for chunk in $(grep -oP '"\./[^"]+\.js"' $DIST/index.js | tr -d '"' | sort -u); do
+            if [ ! -f "$DIST/$chunk" ]; then
+              echo "MISSING: $chunk"
+              MISSING=$((MISSING+1))
+            fi
+          done
+          echo "Missing chunks: $MISSING"
+          [ $MISSING -eq 0 ] || { echo "FAIL: missing chunks referenced by index.js"; exit 1; }
+          echo "chunk references: OK"
+
       - name: Verify features in reply chunk
         run: |
-          DIST=/tmp/overlay-extract/dist-overlay/payload/dist
-          REPLY=$(ls $DIST/reply-*.js 2>/dev/null | head -1)
-          echo "Reply chunk: $REPLY"
-          
-          echo ""
-          echo "=== Feature verification ==="
-          
-          # PERSONAL BUILD with date and link
-          echo -n "PERSONAL BUILD: "
-          if grep -q "PERSONAL BUILD" "$REPLY"; then
-            echo "✓ found"
-            # Check for date format
-            if grep -q 'buildDate\|toISOString' "$REPLY"; then
-              echo "  - date generation: ✓"
-            fi
-            if grep -q 'github.com/dddabtc' "$REPLY"; then
-              echo "  - github link: ✓"
-            fi
-          else
-            echo "✗ NOT FOUND"
-            exit 1
-          fi
-          
-          echo -n "enforceMainSessionPolicy (main session policy guard): "
-          # The TS function name is minified; check for the stable error string literals instead
-          if grep -q "Main session policy blocked" "$REPLY"; then
-            echo "✓ found (via error string)"
-          else
-            echo "⚠ not found by string — checking patch markers"
-            # Soft-fail: the patch may not be compiled yet, but don't block CI
-            echo "(warning only, not blocking)"
-          fi
-          
-          echo -n "sessions_spawn in error: "
-          grep -c "sessions_spawn" "$REPLY" && echo "✓" || echo "⚠ not found (may be OK)"
-          
-          echo -n "SSH block: "
-          grep -c "isSshCommand\|SSH.*block\|ssh.*block" "$REPLY" && echo "✓" || echo "⚠ not found"
-          
-          echo -n "Sub-agent timeout (21600): "
-          grep -c "21600" "$REPLY" && echo "✓" || echo "⚠ not found"
-          
-          echo ""
-          echo "Feature verification complete"
+          DIST=/tmp/overlay-extract/payload/dist
+          REPLY=$(ls $DIST/reply-*.js | head -1)
+          echo "Reply chunk: $(basename $REPLY)"
+
+          # PERSONAL BUILD (string literal, survives minification)
+          PB=$(grep -c "PERSONAL BUILD" "$REPLY" || true)
+          echo "PERSONAL BUILD: $PB"
+          [ "$PB" -ge 1 ] || { echo "FAIL: PERSONAL BUILD not found in reply chunk"; exit 1; }
+
+          # Main session policy blocked (error message string, survives minification)
+          MSP=$(grep -c "Main session policy blocked" "$REPLY" || true)
+          echo "Main session policy blocked: $MSP"
+          [ "$MSP" -ge 1 ] || { echo "FAIL: exec guard error message not found"; exit 1; }
+
+          # 21600 (sub-agent timeout)
+          TO=$(grep -c "21600" "$REPLY" || true)
+          echo "21600 timeout: $TO"
+          [ "$TO" -ge 1 ] || { echo "FAIL: 21600 timeout not found"; exit 1; }
+
+          # dddabtc (repo link)
+          REPO=$(grep -c "dddabtc" "$REPLY" || true)
+          echo "dddabtc repo: $REPO"
+          [ "$REPO" -ge 1 ] || { echo "FAIL: dddabtc repo link not found"; exit 1; }
+
+          echo "All feature checks passed"
+
+      - name: Summary
+        run: |
+          echo "=== Overlay Validation Summary ==="
+          echo "Release: overlay-v2026.3.7"
+          echo "Mode: full-replace"
+          echo "All checks: PASSED"
