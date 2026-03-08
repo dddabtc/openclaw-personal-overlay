@@ -270,8 +270,8 @@ jobs:
           EOF
           gh issue close "${{ inputs.issue_number }}" --repo "${{ github.repository }}" --comment-file /tmp/issue-comment.md
 
-      - name: Re-trigger auto-compat force full run
+      - name: Re-trigger auto-compat (detect/update only)
         env:
           GH_TOKEN: ${{ secrets.OC_GH_TOKEN }}
         run: |
-          gh workflow run auto-compat.yml --repo "${{ github.repository }}" -f force_full_run=true
+          gh workflow run auto-compat.yml --repo "${{ github.repository }}"

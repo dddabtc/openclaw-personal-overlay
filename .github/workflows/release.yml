@@ -101,6 +101,21 @@ jobs:
           echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
           echo "source_run_url=${source_run_url}" >> "$GITHUB_OUTPUT"
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Guard: upstream version must exist on npm
+        env:
+          UPSTREAM_VERSION: ${{ steps.normalize.outputs.upstream_version }}
+        run: |
+          set -euo pipefail
+          npm_version="$(npm view "openclaw@${UPSTREAM_VERSION}" version 2>/dev/null || true)"
+          if [ "$npm_version" != "$UPSTREAM_VERSION" ]; then
+            echo "Upstream version v${UPSTREAM_VERSION} does not exist on npm (resolved: '${npm_version}')" >&2
+            exit 1
+          fi
+
       - name: Resolve compatibility target
         id: compat
         env:
@@ -180,10 +195,6 @@ jobs:
           else
             echo "Ref is not a branch (${{ github.ref }}), skipping push"
           fi
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
 
       - name: Prepare patched upstream dist
         id: patch
