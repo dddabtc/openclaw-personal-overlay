@@ -379,10 +379,16 @@ regular_apply() {
 
   local match
   match="$(compat_match_json "$version" "$commit")"
-  if [[ -z "$match" ]]; then
-    err "incompatible local openclaw build; no changes made"
-    err "required match key: openclawVersion + commitSha"
-    exit $E_INCOMPATIBLE
+  if [[ -z "$artifact" ]]; then
+    if [[ -z "$match" ]]; then
+      err "incompatible local openclaw build; no changes made"
+      err "required match key: openclawVersion + commitSha"
+      exit $E_INCOMPATIBLE
+    fi
+  else
+    if [[ -z "$match" ]]; then
+      log "compatibility matrix has no exact match; proceeding because artifact was explicitly provided"
+    fi
   fi
   if [[ "$commit" == "unknown" ]]; then
     log "commit unknown; using version-only compatibility fallback (set OPENCLAW_PERSONAL_ALLOW_UNKNOWN_COMMIT=0 to disable)"
