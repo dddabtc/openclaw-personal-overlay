@@ -229,6 +229,14 @@ jobs:
         run: |
           scripts/build-dist-overlay.sh /tmp/openclaw-src dist-overlay
 
+      - name: "Preflight gate: validate dist/plugin-sdk exports completeness"
+        if: steps.patch.outputs.has_patches == 'true'
+        env:
+          TARGET_VERSION: ${{ steps.compat.outputs.target_version }}
+        run: |
+          set -euo pipefail
+          bash scripts/validate-dist-exports.sh dist-overlay/payload "$TARGET_VERSION"
+
       - name: "Preflight gate: required release assets must exist"
         if: steps.patch.outputs.has_patches == 'true'
         run: |

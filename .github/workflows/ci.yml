@@ -19,7 +19,33 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: Validate compatibility matrix
         run: python3 scripts/validate-compatibility.py compatibility.json
+      - name: Validate dist export checker against upstream npm package
+        run: |
+          set -euo pipefail
+          v="$(python3 - <<'PY'
+          import json
+          with open('compatibility.json','r',encoding='utf-8') as f:
+              supported = json.load(f).get('supported', [])
+          if not supported:
+              raise SystemExit('no supported versions in compatibility.json')
+          print(supported[0]['openclawVersion'])
+          PY
+          )"
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          (
+            cd "$tmp"
+            npm pack --silent "openclaw@$v" >/dev/null
+            tar -xzf openclaw-*.tgz
+            mkdir -p payload
+            cp -a package/dist payload/dist
+            cp package/package.json payload/package.json
+          )
+          bash scripts/validate-dist-exports.sh "$tmp/payload" "$v"
       - name: Run overlay smoke tests
         run: bash tests/openclaw-personal.test.sh
