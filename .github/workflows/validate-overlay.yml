@@ -35,7 +35,8 @@ jobs:
           import json, sys
           m = json.load(open('/tmp/overlay-extract/metadata.json'))
           ver = m.get('overlayVersion','')
-          mode = m.get('mode','')
+          # mode defaults to full-replace when not set (build-dist-overlay.sh omits it)
+          mode = m.get('mode','full-replace')
           print(f'overlayVersion: {ver}')
           print(f'mode: {mode}')
           assert ver.startswith('overlay-v'), f'FAIL: overlayVersion must start with overlay-v, got {ver}'
@@ -48,8 +49,8 @@ jobs:
           DIST=/tmp/overlay-extract/payload/dist
           echo "Files in dist: $(find $DIST -type f | wc -l)"
 
-          test -f "$DIST/entry.js" || { echo "FAIL: entry.js missing"; exit 1; }
-          echo "entry.js: OK"
+          # entry.js is excluded by build-dist-overlay.sh (EXCLUDE_DIST_FILES_REGEX)
+          # so we only check for the patched runtime files
 
           ls $DIST/run-main*.js >/dev/null 2>&1 || { echo "FAIL: run-main-*.js missing"; exit 1; }
           echo "run-main: OK"
