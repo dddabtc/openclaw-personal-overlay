@@ -9,5 +9,6 @@
     "subagent_default_timeout_6h",
     "main_session_exec_block_v10"
   ],
-  "notes": "v10 fix: includes index.js that references new reply chunk"
+  "notes": "v10 fix: includes index.js that references new reply chunk",
+  "mode": "full-replace"
 }
