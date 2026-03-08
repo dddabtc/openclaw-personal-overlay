@@ -1,7 +1,7 @@
 From fbd0f8cc2971160b8a4290e76bde7dfa53b9e811 Mon Sep 17 00:00:00 2001
 From: subagent-bot <subagent-bot@example.com>
 Date: Sun, 8 Mar 2026 08:14:46 -0300
-Subject: [PATCH 3/4] feat(exec): add main session policy for exec guard and
+Subject: [PATCH 3/5] feat(exec): add main session policy for exec guard and
  SSH block
 
 PERSONAL BUILD: Add ExecMainSessionPolicy type and enforcement:

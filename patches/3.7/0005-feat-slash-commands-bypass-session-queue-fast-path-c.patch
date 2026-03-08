@@ -1,0 +1,137 @@
+From db65cf330cf3bd40a2d2de39fae68350843dc286 Mon Sep 17 00:00:00 2001
+From: subagent-bot <subagent-bot@example.com>
+Date: Sun, 8 Mar 2026 10:33:36 -0300
+Subject: [PATCH 5/5] feat: slash commands bypass session queue (fast-path
+ control)
+
+- All control commands (/status, /model, /reasoning, /help, etc.) now bypass
+  the Telegram sequentialize queue, allowing immediate execution
+- Updated exec guard error messages to recommend sessions_spawn for long-running
+  tasks instead of background mode
+- SSH commands blocked with clearer guidance towards sub-sessions
+- Sub-sessions have 6-hour default timeout, suitable for complex tasks
+---
+ src/agents/bash-tools.exec.ts      | 29 +++++++++++++++++++----------
+ src/auto-reply/status.ts           |  2 +-
+ src/cli/daemon-cli/status.print.ts |  2 +-
+ src/telegram/sequential-key.ts     |  9 ++++++++-
+ 4 files changed, 29 insertions(+), 13 deletions(-)
+
+diff --git a/src/agents/bash-tools.exec.ts b/src/agents/bash-tools.exec.ts
+index 0420f005b..cc333be36 100644
+--- a/src/agents/bash-tools.exec.ts
++++ b/src/agents/bash-tools.exec.ts
+@@ -207,25 +207,33 @@ function enforceMainSessionPolicy(params: {
+ }): void {
+   const { command, sessionKey, policy, timeout, background, yieldMs } = params;
+ 
+-  // Skip if not main session or no policy configured
+-  if (!isMainAgentSession(sessionKey) || !policy) {
++  // Skip if not main session
++  if (!isMainAgentSession(sessionKey)) {
+     return;
+   }
+ 
++  // Default policy when none configured - enforce safety by default
++  const effectivePolicy: ExecMainSessionPolicy = policy ?? {
++    blockSshCommands: true,
++    forbidLongExec: true,
++    maxExecTimeoutSec: 30,
++    maxOutputBytes: 51200,
++  };
++
+   // Check SSH block
+-  if (policy.blockSshCommands && isSshCommand(command)) {
++  if (effectivePolicy.blockSshCommands && isSshCommand(command)) {
+     throw new Error(
+       [
+         "Main session policy blocked SSH command.",
+-        "SSH/SCP/SFTP commands must be executed through a sub-session.",
+-        "Use sessions_spawn to run this command in an isolated session.",
++        "SSH/SCP/SFTP commands must run in a sub-session (default timeout: 6 hours).",
++        "Use sessions_spawn to delegate this task. The sub-session will auto-announce when done.",
+       ].join("\n"),
+     );
+   }
+ 
+   // Check long exec block
+-  if (policy.forbidLongExec) {
+-    const maxExecTimeoutSec = resolveMainSessionMaxExecTimeoutSec(policy);
++  if (effectivePolicy.forbidLongExec) {
++    const maxExecTimeoutSec = resolveMainSessionMaxExecTimeoutSec(effectivePolicy);
+     const backgroundRequested = background === true;
+     const yieldRequested = typeof yieldMs === "number";
+     const yieldExceedsLimit = !yieldRequested || yieldMs > 120_000;
+@@ -234,14 +242,15 @@ function enforceMainSessionPolicy(params: {
+ 
+     const longExecByTimeout = timeoutMissingOrTooLarge;
+     const longExecByForeground =
+-      !backgroundRequested && (policy.requireBackgroundForExec || yieldExceedsLimit);
++      !backgroundRequested && (effectivePolicy.requireBackgroundForExec || yieldExceedsLimit);
+ 
+     if (longExecByTimeout || longExecByForeground) {
+       throw new Error(
+         [
+           `Main session policy blocked exec: command appears long-running.`,
+-          `For main session, timeout must be <= ${maxExecTimeoutSec}s and long runs must use background=true.`,
+-          "Use sessions_spawn for longer tasks, or set background=true with an appropriate timeout.",
++          `Main session exec timeout must be <= ${maxExecTimeoutSec}s to keep the session responsive.`,
++          "Use sessions_spawn to run this in a sub-session (default timeout: 6 hours).",
++          "The sub-session will auto-announce completion. Only use background=true for quick fire-and-forget tasks.",
+         ].join("\n"),
+       );
+     }
+diff --git a/src/auto-reply/status.ts b/src/auto-reply/status.ts
+index b83185d22..cdc505485 100644
+--- a/src/auto-reply/status.ts
++++ b/src/auto-reply/status.ts
+@@ -3,7 +3,7 @@ import { resolveContextTokensForModel } from "../agents/context.js";
+ import { DEFAULT_CONTEXT_TOKENS, DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
+ 
+ // PERSONAL BUILD metadata injected at build time
+-const PERSONAL_BUILD_DATE = "__PERSONAL_BUILD_DATE__";
++const PERSONAL_BUILD_DATE = "2026-03-08T10:30";
+ const PERSONAL_BUILD_REPO = "https://github.com/dddabtc";
+ import { resolveModelAuthMode } from "../agents/model-auth.js";
+ import {
+diff --git a/src/cli/daemon-cli/status.print.ts b/src/cli/daemon-cli/status.print.ts
+index 47f8d0c80..407c4e7ed 100644
+--- a/src/cli/daemon-cli/status.print.ts
++++ b/src/cli/daemon-cli/status.print.ts
+@@ -50,7 +50,7 @@ function sanitizeDaemonStatusForJson(status: DaemonStatus): DaemonStatus {
+ }
+ 
+ // PERSONAL BUILD metadata injected at build time
+-const PERSONAL_BUILD_DATE = "__PERSONAL_BUILD_DATE__";
++const PERSONAL_BUILD_DATE = "2026-03-08T10:30";
+ const PERSONAL_BUILD_REPO = "https://github.com/dddabtc";
+ 
+ export function printDaemonStatus(status: DaemonStatus, opts: { json: boolean }) {
+diff --git a/src/telegram/sequential-key.ts b/src/telegram/sequential-key.ts
+index 3e787055e..4476cbe6d 100644
+--- a/src/telegram/sequential-key.ts
++++ b/src/telegram/sequential-key.ts
+@@ -1,4 +1,5 @@
+ import { type Message, type UserFromGetMe } from "@grammyjs/types";
++import { isControlCommandMessage } from "../auto-reply/command-detection.js";
+ import { isAbortRequestText } from "../auto-reply/reply/abort.js";
+ import { resolveTelegramForumThreadId } from "./bot/helpers.js";
+ 
+@@ -35,7 +36,13 @@ export function getTelegramSequentialKey(ctx: TelegramSequentialKeyContext): str
+   const chatId = msg?.chat?.id ?? ctx.chat?.id;
+   const rawText = msg?.text ?? msg?.caption;
+   const botUsername = ctx.me?.username;
+-  if (isAbortRequestText(rawText, botUsername ? { botUsername } : undefined)) {
++  const normalizeOptions = botUsername ? { botUsername } : undefined;
++  // PERSONAL BUILD: All control commands (slash commands + abort triggers) bypass the queue
++  // This ensures /status, /model, /reasoning, /help etc. execute immediately
++  if (
++    isAbortRequestText(rawText, normalizeOptions) ||
++    isControlCommandMessage(rawText, undefined, normalizeOptions)
++  ) {
+     if (typeof chatId === "number") {
+       return `telegram:${chatId}:control`;
+     }
+-- 
+2.25.1
+

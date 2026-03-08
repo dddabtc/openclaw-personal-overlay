@@ -1,7 +1,7 @@
 From 6ac6ecd1b5fbe0164a943c4c12b7bf8fd955461d Mon Sep 17 00:00:00 2001
 From: subagent-bot <subagent-bot@example.com>
 Date: Sun, 8 Mar 2026 08:15:25 -0300
-Subject: [PATCH 4/4] feat(exec): add output cap for main session policy
+Subject: [PATCH 4/5] feat(exec): add output cap for main session policy
 
 PERSONAL BUILD: Add maxOutputBytes field to ExecMainSessionPolicy.
 When configured, limits exec output in main session to prevent

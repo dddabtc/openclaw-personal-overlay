@@ -1,7 +1,7 @@
 From 14985c819096e70ab8818add60036a57f0d855ac Mon Sep 17 00:00:00 2001
 From: subagent-bot <subagent-bot@example.com>
 Date: Sun, 8 Mar 2026 08:13:03 -0300
-Subject: [PATCH 1/4] feat(subagent): default timeout to 6 hours (21600s)
+Subject: [PATCH 1/5] feat(subagent): default timeout to 6 hours (21600s)
 
 PERSONAL BUILD: Change default subagent timeout from 0 (no timeout) to
 21600 seconds (6 hours), giving complex tasks sufficient time to complete.
