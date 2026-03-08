@@ -21,25 +21,10 @@ err() { echo "[openclaw-personal][ERR] $*" >&2; }
 usage() {
   cat <<'EOF'
 openclaw-personal commands:
-  apply [--source <openclaw-src-path>] [artifact-path-or-url] [--artifact <path|url>] [--release-repo <owner/repo>] [--no-config]
-  rollback [--source <openclaw-src-path>]
-  status [--source <openclaw-src-path>]
-
-Regular-user mode (no --source):
-  - detects local npm/openclaw installation
-  - verifies compatibility using local compatibility.json and artifact metadata
-  - applies dist-overlay artifact payload when compatible
+  apply [artifact-path-or-url] [--artifact <path|url>] [--release-repo <owner/repo>] [--no-config]
+  rollback
+  status
 EOF
-}
-
-repo_path() {
-  local p="${1:-$HOME/openclaw-src}"
-  echo "$p"
-}
-
-current_commit() {
-  local repo="$1"
-  git -C "$repo" rev-parse HEAD
 }
 
 find_npm_global_root() {
@@ -47,7 +32,6 @@ find_npm_global_root() {
 }
 
 resolve_openclaw_install_root() {
-  # 1. Explicit override always wins.
   if [[ -n "${OPENCLAW_INSTALL_ROOT:-}" ]]; then
     if [[ -f "$OPENCLAW_INSTALL_ROOT/package.json" ]]; then
       echo "$OPENCLAW_INSTALL_ROOT"
@@ -55,30 +39,23 @@ resolve_openclaw_install_root() {
     fi
   fi
 
-  # 2. Resolve from `which openclaw` (follows symlinks to the real binary).
-  #    This is the most reliable indicator of which install is actually in use.
   local oc_bin
   oc_bin="$(command -v openclaw 2>/dev/null || true)"
   if [[ -n "$oc_bin" ]]; then
     local real_bin
     real_bin="$(readlink -f "$oc_bin" 2>/dev/null || echo "$oc_bin")"
-    # The binary is typically at <root>/openclaw.mjs or <root>/bin/openclaw,
-    # and the package root contains package.json.
     local dir
     dir="$(dirname "$real_bin")"
-    # Check if package.json is in the same directory (e.g. openclaw.mjs at root)
     if [[ -f "$dir/package.json" ]]; then
       echo "$dir"
       return 0
     fi
-    # Check parent (e.g. bin/openclaw -> ../package.json)
     local parent
     parent="$(cd "$dir/.." 2>/dev/null && pwd || true)"
     if [[ -n "$parent" && -f "$parent/package.json" ]]; then
       echo "$parent"
       return 0
     fi
-    # Check lib/node_modules/openclaw relative to prefix
     local prefix
     prefix="$(cd "$dir/.." 2>/dev/null && pwd || true)"
     if [[ -n "$prefix" && -f "$prefix/lib/node_modules/openclaw/package.json" ]]; then
@@ -87,9 +64,7 @@ resolve_openclaw_install_root() {
     fi
   fi
 
-  # 3. Fallback candidates (npm global, common paths).
   local candidates=()
-
   local npm_root
   npm_root="$(find_npm_global_root)"
   [[ -n "$npm_root" ]] && candidates+=("$npm_root/openclaw")
@@ -104,7 +79,6 @@ resolve_openclaw_install_root() {
     "/usr/lib/node_modules/openclaw"
   )
 
-  # Collect all found installs for diagnostics.
   local found=()
   local c
   for c in "${candidates[@]}"; do
@@ -112,16 +86,6 @@ resolve_openclaw_install_root() {
       found+=("$c")
     fi
   done
-
-  if [[ ${#found[@]} -gt 1 ]]; then
-    log "WARNING: multiple openclaw installs detected:"
-    for c in "${found[@]}"; do
-      local v
-      v="$(python3 -c 'import json;print(json.load(open("'"$c/package.json"'"))["version"])' 2>/dev/null || echo '?')"
-      log "  - $c (version $v)"
-    done
-    log "Using first match. Set OPENCLAW_INSTALL_ROOT to override."
-  fi
 
   if [[ ${#found[@]} -ge 1 ]]; then
     echo "${found[0]}"
@@ -172,7 +136,6 @@ for entry in supported:
         print(json.dumps(entry))
         raise SystemExit(0)
 
-# Optional fallback: if local install commit is unknown, allow unique version match.
 if allow_unknown and commit == "unknown":
     by_version = [e for e in supported if e.get("openclawVersion") == version]
     if len(by_version) == 1:
@@ -200,18 +163,6 @@ download_artifact_if_url() {
   fi
 }
 
-release_artifact_url_for_tag() {
-  local repo="$1"
-  local tag="$2"
-  local api="https://api.github.com/repos/${repo}/releases/tags/${tag}"
-  curl -fsSL "$api" | python3 -c 'import json,sys
-obj=json.load(sys.stdin)
-for a in obj.get("assets",[]):
-    if a.get("name","").endswith("dist-overlay.tar.gz"):
-        print(a.get("browser_download_url",""))
-        break'
-}
-
 release_artifact_for_tag() {
   local repo="$1"
   local tag="$2"
@@ -233,17 +184,6 @@ release_artifact_for_tag() {
   echo "[openclaw-personal] gh not found; downloading artifact via curl: $url" >&2
   curl -fsSL "$url" -o "$out"
   echo "$out"
-}
-
-parse_json_field() {
-  local file="$1"
-  local field="$2"
-  python3 - <<PY
-import json
-with open("$file", "r", encoding="utf-8") as f:
-    d=json.load(f)
-print(d$field)
-PY
 }
 
 resolve_openclaw_config_path() {
@@ -382,7 +322,6 @@ regular_apply() {
   if [[ -z "$artifact" ]]; then
     if [[ -z "$match" ]]; then
       err "incompatible local openclaw build; no changes made"
-      err "required match key: openclawVersion + commitSha"
       exit $E_INCOMPATIBLE
     fi
   else
@@ -390,27 +329,14 @@ regular_apply() {
       log "compatibility matrix has no exact match; proceeding because artifact was explicitly provided"
     fi
   fi
-  if [[ "$commit" == "unknown" ]]; then
-    log "commit unknown; using version-only compatibility fallback (set OPENCLAW_PERSONAL_ALLOW_UNKNOWN_COMMIT=0 to disable)"
-  fi
 
   if [[ -z "$artifact" ]]; then
     local version_tag="overlay-v${version}"
     artifact="$(release_artifact_for_tag "$release_repo" "$version_tag" 2>/dev/null || true)"
-
-    if [[ -z "$artifact" ]]; then
-      # Fallback for environments where direct release asset URL lookup works
-      # but download step above fails.
-      artifact="$(release_artifact_url_for_tag "$release_repo" "$version_tag" 2>/dev/null || true)"
-    fi
-
     if [[ -n "$artifact" ]]; then
       log "resolved version-matched artifact from release tag: ${version_tag}"
-    fi
-
-    if [[ -z "$artifact" ]]; then
+    else
       err "failed to discover version-matched artifact (expected tag: ${version_tag})"
-      err "refusing to fall back to an older overlay release"
       exit $E_NOT_FOUND
     fi
   fi
@@ -428,9 +354,8 @@ regular_apply() {
   [[ -d "$overlay_dir" ]] || { err "invalid artifact (dist-overlay missing)"; exit $E_BAD_ARTIFACT; }
   [[ -f "$overlay_dir/metadata.json" ]] || { err "invalid artifact metadata.json missing"; exit $E_BAD_ARTIFACT; }
 
-  local m_ver m_commit overlay_version expected_overlay_version
+  local m_ver overlay_version expected_overlay_version
   m_ver="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["targetOpenclawVersion"])' "$overlay_dir/metadata.json")"
-  m_commit="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["targetCommitSha"])' "$overlay_dir/metadata.json")"
   overlay_version="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["overlayVersion"])' "$overlay_dir/metadata.json")"
   expected_overlay_version="overlay-v${version}"
 
@@ -441,61 +366,34 @@ regular_apply() {
     exit $E_INCOMPATIBLE
   fi
 
-  if [[ "$commit" == "unknown" ]]; then
-    if [[ "$m_ver" != "$version" ]]; then
-      err "artifact incompatible with local install; no changes made"
-      err "local:   version=$version commit=$commit"
-      err "artifact version=$m_ver commit=$m_commit"
-      exit $E_INCOMPATIBLE
-    fi
-    log "artifact commit check relaxed because local commit is unknown"
-  else
-    if [[ "$m_ver" != "$version" || "$m_commit" != "$commit" ]]; then
-      err "artifact incompatible with local install; no changes made"
-      err "local:   version=$version commit=$commit"
-      err "artifact version=$m_ver commit=$m_commit"
-      exit $E_INCOMPATIBLE
-    fi
-  fi
-
   if [[ -f "$overlay_dir/checksums.sha256" ]]; then
-    (cd "$overlay_dir" && sha256sum -c checksums.sha256)
+    (cd "$overlay_dir" && sha256sum -c checksums.sha256 >/dev/null)
   fi
 
-  [[ -d "$overlay_dir/payload" ]] || { err "invalid artifact payload missing"; exit $E_BAD_ARTIFACT; }
+  [[ -d "$overlay_dir/payload/dist" ]] || { err "invalid artifact: payload/dist missing"; exit $E_BAD_ARTIFACT; }
 
+  # === FULL DIST REPLACEMENT MODE ===
   local ts backup_dir
   ts="$(date -u +%Y%m%dT%H%M%SZ)"
   backup_dir="$STATE_DIR/backups/$ts"
   mkdir -p "$backup_dir"
 
-  local payload_files payload_files_json
-  payload_files="$(cd "$overlay_dir/payload" && find . -type f | sed 's#^\./##' | grep -v '^package\.json$' || true)"
-  while IFS= read -r rel; do
-    [[ -z "$rel" ]] && continue
-    mkdir -p "$backup_dir/$(dirname "$rel")"
-    if [[ -f "$install_root/$rel" ]]; then
-      cp -a "$install_root/$rel" "$backup_dir/$rel"
-    fi
-  done <<< "$payload_files"
+  # 1. Backup entire dist directory
+  log "backing up entire dist/ to $backup_dir"
+  cp -a "$install_root/dist" "$backup_dir/dist"
 
-  # Stage payload to a temp dir first so a mid-copy failure cannot leave
-  # the install root in an inconsistent state.
-  local stage_dir="$tmpdir/stage"
-  mkdir -p "$stage_dir"
-  # Never overwrite installed package.json in regular-user mode.
-  rsync -a --exclude 'package.json' "$overlay_dir/payload/" "$stage_dir/"
+  # 2. Remove all files in dist/ EXCEPT entry.js
+  log "clearing dist/ (preserving entry.js)"
+  find "$install_root/dist" -type f ! -name 'entry.js' -delete
+  find "$install_root/dist" -type d -empty -delete 2>/dev/null || true
 
-  # Verify the staging dir is non-empty before touching the install root.
-  if [[ -z "$(ls -A "$stage_dir" 2>/dev/null)" ]]; then
-    err "staging area is empty after rsync; aborting to protect install root"
-    exit $E_BAD_ARTIFACT
-  fi
+  # 3. Copy overlay's dist/
+  log "applying overlay dist/"
+  cp -a "$overlay_dir/payload/dist/." "$install_root/dist/"
 
-  # Now atomically copy staged files into the install root.
-  rsync -a "$stage_dir/" "$install_root/"
-
-  payload_files_json="$(printf '%s\n' "$payload_files" | python3 -c 'import json,sys; print(json.dumps([line.strip() for line in sys.stdin.read().splitlines() if line.strip()]))')"
+  local file_count
+  file_count=$(find "$install_root/dist" -type f | wc -l)
+  log "dist/ now contains $file_count files"
 
   local config_mutation_json="null"
   if [[ "$mutate_config" == "1" ]]; then
@@ -513,7 +411,7 @@ regular_apply() {
   "commitSha": "${commit}",
   "overlayVersion": "${overlay_version}",
   "backupDir": "${backup_dir}",
-  "payloadFiles": ${payload_files_json},
+  "mode": "full-dist-replace",
   "configMutation": ${config_mutation_json}
 }
 JSON
@@ -543,7 +441,6 @@ regular_status() {
   match="$(compat_match_json "$version" "$commit")"
   if [[ -n "$match" ]]; then
     echo "compatibility_match=true"
-    echo "compatibility_entry=$(echo "$match" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("id","n/a"))')"
   else
     echo "compatibility_match=false"
   fi
@@ -558,66 +455,26 @@ regular_status() {
 }
 
 regular_rollback() {
-  [[ -f "$INSTALL_STATE_FILE" ]] || { err "no install state found for regular-user rollback"; exit $E_NOT_FOUND; }
-  local install_root backup_dir
+  [[ -f "$INSTALL_STATE_FILE" ]] || { err "no install state found for rollback"; exit $E_NOT_FOUND; }
+  
+  local install_root backup_dir mode
   install_root="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["installRoot"])' "$INSTALL_STATE_FILE")"
   backup_dir="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["backupDir"])' "$INSTALL_STATE_FILE")"
+  mode="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("mode","legacy"))' "$INSTALL_STATE_FILE")"
 
   [[ -d "$backup_dir" ]] || { err "backup directory missing: $backup_dir"; exit $E_NOT_FOUND; }
 
-  # Verify backup integrity before attempting restore.
-  python3 - "$INSTALL_STATE_FILE" "$backup_dir" <<'PY' || { err "backup integrity check failed; rollback aborted"; exit $E_NOT_FOUND; }
-import json, pathlib, sys
+  if [[ "$mode" == "full-dist-replace" ]]; then
+    [[ -d "$backup_dir/dist" ]] || { err "backup dist/ missing"; exit $E_NOT_FOUND; }
+    
+    log "restoring full dist/ from backup"
+    rm -rf "$install_root/dist"
+    cp -a "$backup_dir/dist" "$install_root/dist"
+  else
+    log "restoring files from legacy backup"
+    rsync -a "$backup_dir/" "$install_root/"
+  fi
 
-state_file = sys.argv[1]
-backup_dir = pathlib.Path(sys.argv[2])
-
-# Verify required fields are present in state.
-try:
-    state = json.load(open(state_file, "r", encoding="utf-8"))
-except (json.JSONDecodeError, OSError) as exc:
-    print(f"[ERR] could not parse install state: {exc}", file=sys.stderr)
-    sys.exit(1)
-
-required_fields = ["installRoot", "backupDir", "payloadFiles", "overlayVersion"]
-missing = [k for k in required_fields if k not in state]
-if missing:
-    print(f"[ERR] install state missing required fields: {missing}", file=sys.stderr)
-    sys.exit(1)
-
-# Confirm the backup dir recorded in state matches the one we resolved.
-if str(backup_dir.resolve()) != str(pathlib.Path(state["backupDir"]).resolve()):
-    print(
-        f"[ERR] backup dir mismatch: state says {state['backupDir']!r}, "
-        f"resolved {str(backup_dir)!r}",
-        file=sys.stderr,
-    )
-    sys.exit(1)
-
-# Ensure backup dir is not empty.
-contents = list(backup_dir.iterdir())
-if not contents:
-    print(f"[ERR] backup directory is empty: {backup_dir}", file=sys.stderr)
-    sys.exit(1)
-
-print(f"[OK] backup integrity verified ({len(contents)} top-level entries)", file=sys.stderr)
-PY
-
-  # Remove overlaid files first (including files newly added by overlay), then restore backup.
-  python3 - "$INSTALL_STATE_FILE" "$install_root" <<'PY'
-import json, os, pathlib, sys
-state = json.load(open(sys.argv[1], 'r', encoding='utf-8'))
-root = pathlib.Path(sys.argv[2])
-for rel in state.get('payloadFiles', []):
-    p = root / rel
-    try:
-        if p.exists() or p.is_symlink():
-            p.unlink()
-    except IsADirectoryError:
-        pass
-PY
-
-  rsync -a "$backup_dir/" "$install_root/"
   rollback_overlay_config_timeout "$INSTALL_STATE_FILE"
   rm -f "$INSTALL_STATE_FILE"
   log "rollback completed from backup: $backup_dir"
@@ -628,13 +485,11 @@ shift || true
 
 case "$cmd" in
   apply)
-    src=""
     artifact=""
     release_repo="$DEFAULT_RELEASE_REPO"
     no_config=0
     while [[ $# -gt 0 ]]; do
       case "$1" in
-        --source) src="$2"; shift 2 ;;
         --artifact) artifact="$2"; shift 2 ;;
         --release-repo) release_repo="$2"; shift 2 ;;
         --no-config) no_config=1; shift ;;
@@ -650,51 +505,18 @@ case "$cmd" in
           ;;
       esac
     done
-    if [[ -n "$src" ]]; then
-      "$ROOT_DIR/scripts/apply-personal-patch.sh" "$(repo_path "$src")"
+    if [[ "$no_config" == "1" ]]; then
+      log "skipping OpenClaw config mutation (--no-config)"
+      regular_apply "$artifact" "$release_repo" "0"
     else
-      if [[ "$no_config" == "1" ]]; then
-        log "skipping OpenClaw config mutation (--no-config)"
-        regular_apply "$artifact" "$release_repo" "0"
-      else
-        regular_apply "$artifact" "$release_repo" "1"
-      fi
+      regular_apply "$artifact" "$release_repo" "1"
     fi
     ;;
   rollback)
-    src=""
-    while [[ $# -gt 0 ]]; do
-      case "$1" in
-        --source) src="$2"; shift 2 ;;
-        *) err "unknown arg: $1"; exit $E_USAGE ;;
-      esac
-    done
-    if [[ -n "$src" ]]; then
-      "$ROOT_DIR/scripts/rollback-personal-patch.sh" "$(repo_path "$src")"
-    else
-      regular_rollback
-    fi
+    regular_rollback
     ;;
   status)
-    src=""
-    while [[ $# -gt 0 ]]; do
-      case "$1" in
-        --source) src="$2"; shift 2 ;;
-        *) err "unknown arg: $1"; exit $E_USAGE ;;
-      esac
-    done
-    if [[ -n "$src" ]]; then
-      echo "overlay_repo=$ROOT_DIR"
-      echo "target_repo=$src"
-      if [[ -d "$src/.git" ]]; then
-        echo "target_commit=$(current_commit "$src")"
-        echo "target_branch=$(git -C "$src" rev-parse --abbrev-ref HEAD)"
-      else
-        echo "target_repo_missing=true"
-      fi
-    else
-      regular_status
-    fi
+    regular_status
     ;;
   *)
     usage
