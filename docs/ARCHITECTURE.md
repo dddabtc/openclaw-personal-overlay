@@ -472,7 +472,24 @@ dist-overlay/
 
 ---
 
-## 10. 关键决策记录
+## 10. Bug 修复记录
+
+### 2026-03-08: index.js 必须包含在 overlay 中
+
+**问题**：overlay 只包含 `reply-jwObgEFa.js` 但没有 `index.js`。由于 baseline 的 `index.js` 引用旧的 `reply-C5LKjXcC.js`，新的 reply chunk 永远不会被加载。导致 PERSONAL BUILD 不显示，exec guard 不生效。
+
+**根因**：构建脚本的差异检测逻辑将 `reply-jwObgEFa.js` 标记为"new file"（因为 baseline 里的是 `reply-C5LKjXcC.js`，文件名不同），而默认 `INCLUDE_NEW_DIST_FILES=0`，所以新文件被跳过。
+
+**修复**：
+1. 手动确保 `index.js` 和新的 `reply-*.js` 都包含在 overlay 中
+2. 添加 CI 验证步骤：`Validate index.js present`
+3. CI 检查 `index.js` 引用的 reply chunk 是否存在于 overlay 中
+
+**教训**：当 bundler 生成的 chunk 文件名（hash）变化时，`index.js` 必须一起更新。Diff overlay 必须包含引用关系完整的文件集合。
+
+---
+
+## 11. 关键决策记录
 
 ### 选择 Overlay 方式而非 Fork
 
