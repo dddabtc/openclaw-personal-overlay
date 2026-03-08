@@ -97,8 +97,14 @@ fi
 
 missing=()
 for rel in "${required[@]}"; do
+  # A file is valid if it's in the overlay payload OR unchanged in the npm baseline.
+  # Delta overlays only include changed files; unchanged plugin-sdk files stay from npm install.
   if [[ ! -f "$PAYLOAD_DIR/dist/$rel" ]]; then
-    missing+=("$rel")
+    if [[ -n "$reference_dist" && ! -f "$reference_dist/$rel" ]]; then
+      # Missing from both overlay and npm baseline — this is a real problem
+      missing+=("$rel")
+    fi
+    # else: file exists in npm baseline and was not changed — OK for delta overlay
   fi
 done
 
@@ -107,7 +113,7 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   echo "source exports: $source_desc"
   echo "payload: $PAYLOAD_DIR"
   echo "required .js exports: ${#required[@]}"
-  echo "missing files: ${#missing[@]}"
+  echo "missing from both overlay and npm baseline: ${#missing[@]}"
   printf '%s\n' "${missing[@]}"
   exit 1
 fi
@@ -116,3 +122,4 @@ echo "[PASS] plugin-sdk export validation passed"
 echo "source exports: $source_desc"
 echo "payload: $PAYLOAD_DIR"
 echo "validated .js exports: ${#required[@]}"
+echo "(note: unchanged plugin-sdk files not in overlay are supplied by npm baseline)"
