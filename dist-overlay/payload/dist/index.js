@@ -3,7 +3,7 @@ import "./paths-BJV7vkaX.js";
 import { D as tryParseLogLevel, F as hasHelpOrVersion, I as hasRootVersionAlias, N as getVerboseFlag, P as hasFlag, f as isRich, j as getCommandPathWithRootOptions, p as theme, s as setVerbose, w as ALLOWED_LOG_LEVELS } from "./globals-BM8hKFm0.js";
 import { T as toWhatsappJid, l as escapeRegExp, m as normalizeE164, n as assertWebChannel } from "./utils-DC4zYvW0.js";
 import "./thinking-BYwvlJ3S.js";
-import { Dt as resolveCommitHash, Kt as createDefaultDeps, t as getReplyFromConfig } from "./reply-C9CZWvFI.js";
+import { Dt as resolveCommitHash, Kt as createDefaultDeps, t as getReplyFromConfig } from "./reply-BPM1NCsO.js";
 import "./agent-scope-Cbp0nOOm.js";
 import { f as defaultRuntime, r as enableConsoleCapture, u as visibleWidth } from "./subsystem-C9Xgeyrw.js";
 import "./openclaw-root-D1FcrxOp.js";
@@ -113,7 +113,7 @@ import "./nodes-screen-YLsdO-so.js";
 import "./system-run-command-B4aDBJPj.js";
 import "./server-lifecycle-C2VdJ6NM.js";
 import "./stagger-DTvG3eqM.js";
-import { r as waitForever, t as monitorWebChannel } from "./channel-web-Bgu8HnJ6.js";
+import { r as waitForever, t as monitorWebChannel } from "./channel-web-1RJiw8SY.js";
 import "./outbound-DKY4-h2u.js";
 import "./session-CohjeuGW.js";
 import "./login-7t1-Jl6F.js";
@@ -121,9 +121,9 @@ import { t as isMainModule } from "./is-main-CTxEDlrU.js";
 import { t as ensureOpenClawCliOnPath } from "./path-env-CAl3CLRB.js";
 import { t as assertSupportedRuntime } from "./runtime-guard-C_HR58Q-.js";
 import "./ports-5kA3hE28.js";
-import { i as getCoreCliCommandsWithSubcommands, n as setProgramContext, o as registerProgramCommands, s as getSubCliCommandsWithSubcommands } from "./program-context-HdvGJbMc.js";
-import "./plugin-registry-03dDMpUd.js";
-import { n as resolveCliChannelOptions } from "./channel-options-CjyutmyW.js";
+import { i as getCoreCliCommandsWithSubcommands, n as setProgramContext, o as registerProgramCommands, s as getSubCliCommandsWithSubcommands } from "./program-context-BL1G9qM3.js";
+import "./plugin-registry-CaDPPBDC.js";
+import { n as resolveCliChannelOptions } from "./channel-options-BxHA3LrQ.js";
 import process$1 from "node:process";
 import { fileURLToPath } from "node:url";
 import { Command, InvalidArgumentError } from "commander";
@@ -577,7 +577,7 @@ function loadConfigGuardModule() {
 	return configGuardModulePromise;
 }
 function loadPluginRegistryModule() {
-	pluginRegistryModulePromise ??= import("./plugin-registry-03dDMpUd.js").then((n) => n.n);
+	pluginRegistryModulePromise ??= import("./plugin-registry-CaDPPBDC.js").then((n) => n.n);
 	return pluginRegistryModulePromise;
 }
 function getRootCommand(command) {

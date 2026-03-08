@@ -21233,7 +21233,7 @@ function sanitizeDaemonStatusForJson(status) {
 		}
 	};
 }
-const PERSONAL_BUILD_DATE = "2026-03-08 12:18:29";
+const PERSONAL_BUILD_DATE = "2026-03-08T10:30";
 const PERSONAL_BUILD_REPO = "https://github.com/dddabtc";
 function printDaemonStatus(status, opts) {
 	if (opts.json) {

@@ -1,9 +1,9 @@
 {
   "format": "openclaw-personal-dist-overlay/v1",
-  "overlayVersion": "2026.3.7-personal-v2",
+  "overlayVersion": "overlay-v2026.3.7",
   "targetOpenclawVersion": "2026.3.7",
-  "targetCommitSha": "v2026.3.7",
-  "builtAt": "2026-03-08 12:18:29Z",
+  "targetCommitSha": "42a1394c5c0fb86706f61598e68e0db30e8c99c1",
+  "builtAt": "2026-03-08T15:13:00Z",
   "features": [
     "PERSONAL_BUILD_tag_in_status",
     "subagent_default_timeout_6h",
