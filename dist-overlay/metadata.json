@@ -3,11 +3,11 @@
   "overlayVersion": "overlay-v2026.3.7",
   "targetOpenclawVersion": "2026.3.7",
   "targetCommitSha": "42a1394c5c0fb86706f61598e68e0db30e8c99c1",
-  "builtAt": "2026-03-08T15:18:00Z",
+  "builtAt": "2026-03-08T15:58:00Z",
   "features": [
     "PERSONAL_BUILD_tag_in_status",
     "subagent_default_timeout_6h",
     "main_session_exec_block_v10"
   ],
-  "notes": "v10: exec in main session returns error (no auto-forwarding). User must use sessions_spawn."
+  "notes": "v10 fix: includes index.js that references new reply chunk"
 }

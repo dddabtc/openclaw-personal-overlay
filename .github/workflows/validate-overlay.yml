@@ -33,6 +33,25 @@ jobs:
         run: |
           ! find /tmp/overlay-extract/dist-overlay/ -name "entry.js" | grep . || { echo "FAIL: entry.js must not be in overlay"; exit 1; }
       
+      - name: Validate index.js present
+        run: |
+          DIST=/tmp/overlay-extract/dist-overlay/payload/dist
+          if [ ! -f "$DIST/index.js" ]; then
+            echo "FAIL: index.js must be present in overlay (required to reference new reply chunk)"
+            exit 1
+          fi
+          # Verify index.js references a reply chunk that exists in overlay
+          REPLY_REF=$(grep -oP 'from "\./reply-[^"]+\.js"' "$DIST/index.js" | head -1 | grep -oP 'reply-[^"]+\.js')
+          if [ -z "$REPLY_REF" ]; then
+            echo "FAIL: index.js does not reference any reply chunk"
+            exit 1
+          fi
+          if [ ! -f "$DIST/$REPLY_REF" ]; then
+            echo "FAIL: index.js references $REPLY_REF but file not found in overlay"
+            exit 1
+          fi
+          echo "OK: index.js references $REPLY_REF (present in overlay)"
+      
       - name: Validate checksums
         run: |
           cd /tmp/overlay-extract/dist-overlay
