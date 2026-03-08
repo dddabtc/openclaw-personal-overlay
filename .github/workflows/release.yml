@@ -105,7 +105,7 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Guard: upstream version must exist on npm
+      - name: "Guard: upstream version must exist on npm"
         env:
           UPSTREAM_VERSION: ${{ steps.normalize.outputs.upstream_version }}
         run: |
