@@ -1,10 +1,10 @@
-import "../../paths-C9do7WCN.js";
-import { ft as isAgentBootstrapEvent, t as createSubsystemLogger } from "../../subsystem-DhjIxims.js";
-import { d as loadExtraBootstrapFiles, u as filterBootstrapFilesForSession } from "../../workspace-jH04VzX-.js";
-import "../../boolean-mcn6kL0s.js";
-import "../../frontmatter-CYyVkHva.js";
-import { t as resolveHookConfig } from "../../config-B2xc8slk.js";
-
+import "../../paths-DkxwiA8g.js";
+import { t as createSubsystemLogger } from "../../subsystem-C9Gk4AAH.js";
+import { d as loadExtraBootstrapFilesWithDiagnostics, u as filterBootstrapFilesForSession } from "../../workspace-N-w3YxwR.js";
+import "../../logger-CJbXRTpA.js";
+import { i as isAgentBootstrapEvent } from "../../legacy-names-dyOVyQ4G.js";
+import "../../frontmatter-DR8lvaM9.js";
+import { t as resolveHookConfig } from "../../config-Bs6iYHRw.js";
 //#region src/hooks/bundled/bootstrap-extra-files/handler.ts
 const HOOK_KEY = "bootstrap-extra-files";
 const log = createSubsystemLogger("bootstrap-extra-files");
@@ -27,13 +27,19 @@ const bootstrapExtraFilesHook = async (event) => {
 	const patterns = resolveExtraBootstrapPatterns(hookConfig);
 	if (patterns.length === 0) return;
 	try {
-		const extras = await loadExtraBootstrapFiles(context.workspaceDir, patterns);
+		const { files: extras, diagnostics } = await loadExtraBootstrapFilesWithDiagnostics(context.workspaceDir, patterns);
+		if (diagnostics.length > 0) log.debug("skipped extra bootstrap candidates", {
+			skipped: diagnostics.length,
+			reasons: diagnostics.reduce((counts, item) => {
+				counts[item.reason] = (counts[item.reason] ?? 0) + 1;
+				return counts;
+			}, {})
+		});
 		if (extras.length === 0) return;
 		context.bootstrapFiles = filterBootstrapFilesForSession([...context.bootstrapFiles, ...extras], context.sessionKey);
 	} catch (err) {
 		log.warn(`failed: ${String(err)}`);
 	}
 };
-
 //#endregion
 export { bootstrapExtraFilesHook as default };

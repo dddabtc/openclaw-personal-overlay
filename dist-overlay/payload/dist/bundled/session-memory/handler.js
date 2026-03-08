@@ -1,75 +1,61 @@
-import { s as resolveAgentWorkspaceDir } from "../../agent-scope-DBH4tc6E.js";
-import { s as resolveStateDir } from "../../paths-C9do7WCN.js";
-import { t as createSubsystemLogger } from "../../subsystem-DhjIxims.js";
-import { l as resolveAgentIdFromSessionKey } from "../../session-key-YGVrIVO5.js";
-import "../../workspace-jH04VzX-.js";
-import "../../model-selection-w6ucPeWO.js";
-import "../../github-copilot-token-BkwQAVvU.js";
-import "../../env-ClJSw9gs.js";
-import "../../boolean-mcn6kL0s.js";
-import "../../tokens-fYdHc5Il.js";
-import "../../pi-embedded-CId9gqP3.js";
-import "../../plugins-C1VUBuby.js";
-import "../../accounts-CfKX8yG7.js";
-import "../../bindings-CDK0IrP0.js";
-import "../../send-a1VWNOHV.js";
-import "../../send-Cw0_ZiTX.js";
-import "../../deliver-BeOJWYth.js";
-import "../../diagnostic-DQjjW919.js";
-import "../../diagnostic-session-state-C0Sxjfox.js";
-import "../../accounts-cHckgn_t.js";
-import "../../send-BiqYG7oR.js";
-import "../../image-ops-BhxPhYFk.js";
-import "../../pi-model-discovery-C-yOXpma.js";
-import "../../message-channel-pwZqDIgx.js";
-import "../../pi-embedded-helpers-BgYUaSDq.js";
-import "../../config-CyPYPMkz.js";
-import "../../manifest-registry-BT84-RS7.js";
-import "../../dock-DZ4pzoln.js";
-import "../../chrome-CcrVABjD.js";
-import "../../ssrf-fLpTpy3w.js";
-import "../../frontmatter-CYyVkHva.js";
-import "../../skills-BBsi_dtC.js";
-import "../../redact-SGQAq28W.js";
-import "../../errors-DCpmSNbo.js";
-import "../../fs-safe-BFmsMcLL.js";
-import "../../store-CYaLnTp3.js";
-import { O as hasInterSessionUserProvenance } from "../../sessions-C9kw3nkg.js";
-import "../../accounts-DXV3Uvzx.js";
-import "../../paths-PSh4fBQD.js";
-import "../../tool-images-CR47IyyS.js";
-import "../../thinking-6RspTgk5.js";
-import "../../image-EizydwYA.js";
-import "../../reply-prefix-CcDJywCq.js";
-import "../../manager-BJQTTP5s.js";
-import "../../gemini-auth-BSk0KCpC.js";
-import "../../fetch-guard-BYswKNH0.js";
-import "../../query-expansion-CdGiZbeS.js";
-import "../../retry-BxRFAOR_.js";
-import "../../target-errors-DJuiiQI2.js";
-import "../../chunk-BI4_3V6t.js";
-import "../../markdown-tables-BoOL-Y6h.js";
-import "../../local-roots-BqL3X_i0.js";
-import "../../ir-BXqInHn9.js";
-import "../../render-D7ZNn_WS.js";
-import "../../commands-registry-BT9619S7.js";
-import "../../skill-commands-Bf82eL6s.js";
-import "../../runner-D1Afuzkr.js";
-import "../../fetch-DTTG_w9o.js";
-import "../../channel-activity-BRGWkG9d.js";
-import "../../tables-C-Mxp4A9.js";
-import "../../send-Cf1Vq3Nw.js";
-import "../../outbound-attachment-CaGRyfCX.js";
-import "../../send-DsdsfS6s.js";
-import "../../resolve-route-BsYELmmd.js";
-import "../../proxy-BMa4czGu.js";
-import "../../replies-CSQqUYSm.js";
+import { c as resolveAgentWorkspaceDir } from "../../run-with-concurrency-Dz4ZBsiB.js";
+import { c as resolveStateDir } from "../../paths-DkxwiA8g.js";
+import { t as createSubsystemLogger } from "../../subsystem-C9Gk4AAH.js";
+import { B as resolveAgentIdFromSessionKey } from "../../workspace-N-w3YxwR.js";
+import "../../logger-CJbXRTpA.js";
+import "../../model-selection-BPSJNV1m.js";
+import "../../github-copilot-token-8N63GdbE.js";
+import "../../legacy-names-dyOVyQ4G.js";
+import "../../thinking-CeokMk4d.js";
+import "../../tokens-C27XM9Ox.js";
+import "../../pi-embedded-BqMLaUfK.js";
+import "../../plugins-DziabxS9.js";
+import "../../accounts-N-kltVGR.js";
+import "../../send-CYZDys-m.js";
+import "../../send-vOjg4RvO.js";
+import "../../deliver-YYFfrsTk.js";
+import "../../diagnostic-DENsBzpJ.js";
+import "../../accounts-BKYCbdnh.js";
+import "../../image-ops-CgbthA1d.js";
+import "../../send-C-2jiLtL.js";
+import "../../pi-model-discovery-DFsjK5qR.js";
+import { pt as hasInterSessionUserProvenance } from "../../pi-embedded-helpers-UBvLlZ4y.js";
+import "../../chrome-CJkW-A2q.js";
+import "../../frontmatter-DR8lvaM9.js";
+import "../../skills-CXtBlvSl.js";
+import "../../path-alias-guards-DGYCiXxw.js";
+import "../../redact-Cx40Dm28.js";
+import "../../errors-DopTfGpy.js";
+import { c as writeFileWithinRoot } from "../../fs-safe-oQRM60Ha.js";
+import "../../proxy-env-CKMZMH7P.js";
+import "../../store-C2MCa3R9.js";
+import "../../paths-xqWXix_o.js";
+import "../../tool-images-C7WBa8bh.js";
+import "../../image-DUdnUxSL.js";
+import "../../audio-transcription-runner-Cgui9HIY.js";
+import "../../fetch-BOsAhlie.js";
+import "../../fetch-guard-DUaK4800.js";
+import "../../api-key-rotation-UUPMd7AY.js";
+import "../../proxy-fetch-53_Tkfsi.js";
+import "../../ir-B6fug1VF.js";
+import "../../render-7C7EDC8_.js";
+import "../../target-errors-tjJv0qi0.js";
+import "../../commands-registry-C79Pvp29.js";
+import "../../skill-commands-BLGVvnUq.js";
+import "../../fetch-CONQGbzL.js";
+import "../../channel-activity-BoGQ1glY.js";
+import "../../tables-Yp1X47PI.js";
+import "../../send-GuiGXerA.js";
+import "../../outbound-attachment-iBGau-cJ.js";
+import "../../send-BC5yjJJF.js";
+import "../../proxy-BzwL4n0W.js";
+import "../../manager-7fpWwHd3.js";
+import "../../query-expansion-CrQZXi2l.js";
 import { generateSlugViaLLM } from "../../llm-slug-generator.js";
-import { t as resolveHookConfig } from "../../config-B2xc8slk.js";
+import { t as resolveHookConfig } from "../../config-Bs6iYHRw.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-
 //#region src/hooks/bundled/session-memory/handler.ts
 /**
 * Session memory hook handler
@@ -230,8 +216,12 @@ const saveSessionToMemory = async (event) => {
 			""
 		];
 		if (sessionContent) entryParts.push("## Conversation Summary", "", sessionContent, "");
-		const entry = entryParts.join("\n");
-		await fs.writeFile(memoryFilePath, entry, "utf-8");
+		await writeFileWithinRoot({
+			rootDir: memoryDir,
+			relativePath: filename,
+			data: entryParts.join("\n"),
+			encoding: "utf-8"
+		});
 		log.debug("Memory file written successfully");
 		const relPath = memoryFilePath.replace(os.homedir(), "~");
 		log.info(`Session context saved to ${relPath}`);
@@ -244,6 +234,5 @@ const saveSessionToMemory = async (event) => {
 		else log.error("Failed to save session memory", { error: String(err) });
 	}
 };
-
 //#endregion
 export { saveSessionToMemory as default };

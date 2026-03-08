@@ -1,7 +1,9 @@
 {
   "format": "openclaw-personal-dist-overlay/v1",
-  "overlayVersion": "179492b",
-  "targetOpenclawVersion": "2026.2.25",
+  "overlayVersion": "overlay-v2026.3.7",
+  "targetOpenclawVersion": "2026.3.7",
   "targetCommitSha": "unknown",
-  "builtAt": "2026-03-08T09:59:43Z"
+  "builtAt": "2026-03-08T12:57:00Z",
+  "patchCount": 4,
+  "notes": "index.js included in payload/dist/ to fix chunk reference chain"
 }
