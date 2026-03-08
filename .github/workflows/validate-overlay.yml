@@ -44,12 +44,13 @@ jobs:
           fi
           echo "OK: index.js present"
           
-          # Must have run-main.js (CLI runner)
-          if [ ! -f "$DIST/run-main.js" ]; then
-            echo "FAIL: run-main.js must be present (full-replace mode)"
+          # Must have run-main.js (CLI runner) — may have a hash suffix
+          RUN_MAIN=$(ls "$DIST"/run-main*.js 2>/dev/null | head -1)
+          if [ -z "$RUN_MAIN" ]; then
+            echo "FAIL: run-main.js (or run-main-<hash>.js) must be present (full-replace mode)"
             exit 1
           fi
-          echo "OK: run-main.js present"
+          echo "OK: run-main found: $(basename $RUN_MAIN)"
           
           # Must have entry.js (CLI entry point)
           if [ ! -f "$DIST/entry.js" ]; then
