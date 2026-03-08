@@ -1,0 +1,157 @@
+import "./globals-Bv4ZcVWM.js";
+import "./paths-BfR2LXbA.js";
+import { t as createSubsystemLogger } from "./subsystem-Cf9yS0UI.js";
+import "./boolean-DTgd5CzD.js";
+import { H as loadConfig } from "./auth-profiles-B1GaQT5q.js";
+import { d as resolveDefaultAgentId, u as resolveAgentWorkspaceDir } from "./agent-scope-Da1EU5GK.js";
+import "./utils-C5WN6czr.js";
+import "./openclaw-root-CUd_d2ed.js";
+import "./logger-DUUyiuLB.js";
+import "./exec-ByKs6PmP.js";
+import "./github-copilot-token-CcBrBN3h.js";
+import "./host-env-security-blJbxyQo.js";
+import "./version-Bxx5bg6l.js";
+import "./registry-DoLLbW4m.js";
+import "./manifest-registry-CuX_zqg5.js";
+import "./dock-B6YZ_Gqv.js";
+import "./tokens-Duelq45x.js";
+import { c as loadOpenClawPlugins } from "./compact-DgmWC38G.js";
+import "./plugins-BVlyTb8F.js";
+import "./accounts-BwOHHQBZ.js";
+import "./channel-config-helpers-CsB6X81V.js";
+import "./send-DpCg3YM8.js";
+import "./send-DZ4MfhsV.js";
+import "./with-timeout-BARyZM0U.js";
+import "./deliver-DQukRKso.js";
+import "./diagnostic-B04gtq38.js";
+import "./accounts-araUYuXY.js";
+import "./image-ops-DKf0L-bN.js";
+import "./send-B_tyFRz-.js";
+import "./pi-model-discovery-Cl3GqCCy.js";
+import "./message-channel-Be-gqLbb.js";
+import "./pi-embedded-helpers-BB2LNFoT.js";
+import "./sandbox-oZkjnD_W.js";
+import "./tool-catalog-CFg6jrp9.js";
+import "./chrome-BYPs9otD.js";
+import "./tailscale-Bxls2k-9.js";
+import "./tailnet-D6G15e7J.js";
+import "./ws-Z0GdyNOg.js";
+import "./auth-DdEjESsp.js";
+import "./credentials-BmtdMaC0.js";
+import "./resolve-configured-secret-input-string-Cjny1Pmf.js";
+import "./server-context-L6JZ3V1F.js";
+import "./frontmatter-CDYnjLEC.js";
+import "./env-overrides-BeDt30xz.js";
+import "./path-alias-guards-a82xwrK5.js";
+import "./skills-CGqwYVbO.js";
+import "./paths-DELgyEUB.js";
+import "./redact-SKlSb-Ph.js";
+import "./errors-Duls987w.js";
+import "./fs-safe-Dyd9x5R1.js";
+import "./proxy-env-DQF_ZEGo.js";
+import "./store-XprJI9yK.js";
+import "./ports-CTMzENnh.js";
+import "./trash-CsUKAlUm.js";
+import "./server-middleware-UHVTx4Wc.js";
+import "./sessions-KF02xeDF.js";
+import "./paths-BCX3TKIK.js";
+import "./chat-envelope-B0leI413.js";
+import "./tool-images-CnTjIKsB.js";
+import "./thinking-DykY2Fzj.js";
+import "./models-config-DNwGtD55.js";
+import "./exec-approvals-allowlist-BdNMgcAC.js";
+import "./exec-safe-bin-runtime-policy-CiJtqxJd.js";
+import "./model-catalog-CcpxN9xq.js";
+import "./fetch-kL7SMj4q.js";
+import "./audio-transcription-runner-D0oDQRpw.js";
+import "./fetch-guard-BWFv8lEA.js";
+import "./image-DnRuv_Ze.js";
+import "./tool-display-B1jaCPlW.js";
+import "./api-key-rotation-n3L8KwZo.js";
+import "./proxy-fetch-4FkZfomC.js";
+import "./ir-C15WNkO9.js";
+import "./render-DMmq5MTs.js";
+import "./target-errors-B3W5IfG_.js";
+import "./commands--Xt5HXe3.js";
+import "./commands-registry-Bm1F8bg4.js";
+import "./session-cost-usage-5CCZbVhO.js";
+import "./session-utils-D_B6KIN6.js";
+import "./sqlite-BcNj0Ip5.js";
+import "./call-qPAXM4nu.js";
+import "./pairing-token-DSWSMr10.js";
+import "./fetch-C1n3F85v.js";
+import "./pairing-store-BZ0sYEkS.js";
+import "./exec-approvals-oKbYU_E8.js";
+import "./nodes-screen-D1-q_6kF.js";
+import "./restart-Bi6a4Blc.js";
+import "./system-run-command-Dj8_eyp2.js";
+import "./skill-commands-935SSVLK.js";
+import "./pi-tools.policy-jZh0ZTnY.js";
+import "./workspace-dirs-NchuuYTj.js";
+import "./channel-activity-JqdRhRqW.js";
+import "./tables-DQEH6Hye.js";
+import "./server-lifecycle-Cg-nDG7u.js";
+import "./stagger-BeBoVYTA.js";
+import "./channel-selection-6p6_IQ6f.js";
+import "./plugin-auto-enable-g3xvPqOd.js";
+import "./send-J2jFT-_r.js";
+import "./outbound-attachment-CtYnCUwN.js";
+import "./delivery-queue-gLCiF0so.js";
+import "./send-Bn6tkII2.js";
+import "./proxy-De2oME_n.js";
+import "./timeouts-B6lMOqjQ.js";
+import "./runtime-config-collectors-DHveN9Fx.js";
+import "./command-secret-targets-GGw5yqsw.js";
+import "./connection-auth-CgG0na9s.js";
+import "./onboard-helpers-IxvJd8Hl.js";
+import "./prompt-style-Bcr283QM.js";
+import "./pairing-labels-DlgfgY6b.js";
+import "./memory-cli-DIzu0MFF.js";
+import "./manager-BF-TaQjb.js";
+import "./links-BvlkOkWs.js";
+import "./cli-utils-DNej4wZu.js";
+import "./help-format-Dl2PHE-X.js";
+import "./progress-fMgIMdPa.js";
+//#region src/plugins/cli.ts
+const log = createSubsystemLogger("plugins");
+function registerPluginCliCommands(program, cfg) {
+	const config = cfg ?? loadConfig();
+	const workspaceDir = resolveAgentWorkspaceDir(config, resolveDefaultAgentId(config));
+	const logger = {
+		info: (msg) => log.info(msg),
+		warn: (msg) => log.warn(msg),
+		error: (msg) => log.error(msg),
+		debug: (msg) => log.debug(msg)
+	};
+	const registry = loadOpenClawPlugins({
+		config,
+		workspaceDir,
+		logger
+	});
+	const existingCommands = new Set(program.commands.map((cmd) => cmd.name()));
+	for (const entry of registry.cliRegistrars) {
+		if (entry.commands.length > 0) {
+			const overlaps = entry.commands.filter((command) => existingCommands.has(command));
+			if (overlaps.length > 0) {
+				log.debug(`plugin CLI register skipped (${entry.pluginId}): command already registered (${overlaps.join(", ")})`);
+				continue;
+			}
+		}
+		try {
+			const result = entry.register({
+				program,
+				config,
+				workspaceDir,
+				logger
+			});
+			if (result && typeof result.then === "function") result.catch((err) => {
+				log.warn(`plugin CLI register failed (${entry.pluginId}): ${String(err)}`);
+			});
+			for (const command of entry.commands) existingCommands.add(command);
+		} catch (err) {
+			log.warn(`plugin CLI register failed (${entry.pluginId}): ${String(err)}`);
+		}
+	}
+}
+//#endregion
+export { registerPluginCliCommands };

@@ -2,7 +2,7 @@ import { S as ensureAgentWorkspace, a as resolveAgentDir, c as resolveAgentWorks
 import "./paths-GBpjI3o0.js";
 import "./logger-Bj0Xl6pn.js";
 import { Fr as DEFAULT_MODEL, Ir as DEFAULT_PROVIDER, m as resolveThinkingDefault } from "./model-selection-BlrVqGD5.js";
-import { J as resolveAgentIdentity, K as resolveAgentTimeoutMs, t as runEmbeddedPiAgent } from "./pi-embedded-DlJVRB0x.js";
+import { J as resolveAgentIdentity, K as resolveAgentTimeoutMs, t as runEmbeddedPiAgent } from "./pi-embedded-bKypWmfh.js";
 import "./github-copilot-token-PBo8Vdmp.js";
 import "./thinking-D4abO-Mp.js";
 import "./tokens-C_KDZM8b.js";

@@ -8,7 +8,7 @@ import "./github-copilot-token-8N63GdbE.js";
 import "./legacy-names-dyOVyQ4G.js";
 import "./thinking-Bh79Lk76.js";
 import "./tokens-C27XM9Ox.js";
-import { t as runEmbeddedPiAgent } from "./pi-embedded-KhSY-5OZ.js";
+import { t as runEmbeddedPiAgent } from "./pi-embedded-Chz_2aHJ.js";
 import "./plugins-Dl3Pc1oJ.js";
 import "./accounts-nm0_gAPL.js";
 import "./send-nMac99Ls.js";
