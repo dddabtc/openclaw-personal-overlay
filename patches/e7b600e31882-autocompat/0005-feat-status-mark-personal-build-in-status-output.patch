@@ -1,0 +1,28 @@
+From 458c58e57411cd32fc8731ce1631aac27c37c117 Mon Sep 17 00:00:00 2001
+From: subagent-bot <subagent-bot@example.com>
+Date: Sun, 8 Mar 2026 06:27:22 -0300
+Subject: [PATCH 5/8] feat(status): mark personal build in status output
+
+---
+ src/auto-reply/status.ts | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/src/auto-reply/status.ts b/src/auto-reply/status.ts
+index a08931b1c..ea8d9dedb 100644
+--- a/src/auto-reply/status.ts
++++ b/src/auto-reply/status.ts
+@@ -665,8 +665,11 @@ export function buildStatusMessage(args: StatusArgs): string {
+   const mediaLine = formatMediaUnderstandingLine(args.mediaDecisions);
+   const voiceLine = formatVoiceModeLine(args.config, args.sessionEntry);
+ 
++  const personalBuildLine = "🧩 PERSONAL BUILD";
++
+   return [
+     versionLine,
++    personalBuildLine,
+     args.timeLine,
+     modelLine,
+     fallbackLine,
+-- 
+2.25.1
+
