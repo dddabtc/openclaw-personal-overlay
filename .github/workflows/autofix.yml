@@ -66,7 +66,27 @@ jobs:
           if not commit_sha:
               print(f"WARNING: could not resolve commitSha for openclaw@{version}")
               sys.exit(1)
-          supported.append({'openclawVersion': version, 'commitSha': commit_sha, 'status': 'compatible', 'notes': 'auto-added by autofix'})
+          # Derive patchSetDir from latest supported entry's convention
+          latest_patch = None
+          for s in reversed(supported):
+              if s.get('patchSetDir') and s.get('status') in ('supported', 'compatible', None):
+                  latest_patch = s
+                  break
+          # Default patchSetDir: patches/<major.minor> from version
+          parts = version.split('.')
+          default_patch_dir = f"patches/{parts[-1]}" if len(parts) >= 2 else f"patches/{version}"
+          patch_dir = latest_patch['patchSetDir'] if latest_patch else default_patch_dir
+          supported.append({
+              'id': f'oc-{version}-personal-overlay',
+              'openclawVersion': version,
+              'commitSha': commit_sha,
+              'upstreamBaseCommit': commit_sha,
+              'patchSetDir': patch_dir,
+              'binaryArtifact': 'dist-overlay.tar.gz',
+              'atlasCompat': {'memory_search': 'expected', 'memory_get': 'expected'},
+              'status': 'compatible',
+              'notes': 'auto-added by autofix',
+          })
           data['supported'] = supported
           with open(path, 'w', encoding='utf-8') as f:
               json.dump(data, f, indent=2, ensure_ascii=False)

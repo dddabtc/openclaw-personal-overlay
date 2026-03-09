@@ -1,0 +1,199 @@
+From d68bf368e3fd767dcf15ea3f7407f2bc5f6ecf8c Mon Sep 17 00:00:00 2001
+From: subagent-bot <subagent-bot@example.com>
+Date: Sun, 8 Mar 2026 08:14:46 -0300
+Subject: [PATCH 3/4] feat(exec): add main session policy for exec guard and
+ SSH block
+
+PERSONAL BUILD: Add ExecMainSessionPolicy type and enforcement:
+- forbidLongExec: Block long-running foreground commands in main session
+- blockSshCommands: Block SSH/SCP/SFTP commands in main session
+- maxExecTimeoutSec: Maximum timeout for foreground exec (default 120s)
+- requireBackgroundForExec: Force background mode for all exec
+
+Main session detection via session key pattern matching.
+SSH commands are detected via regex patterns for ssh, scp, sftp, rsync.
+---
+ src/agents/bash-tools.exec-types.ts |  17 +++++
+ src/agents/bash-tools.exec.ts       | 110 ++++++++++++++++++++++++++++
+ 2 files changed, 127 insertions(+)
+
+diff --git a/src/agents/bash-tools.exec-types.ts b/src/agents/bash-tools.exec-types.ts
+index bef8ea4bf..d2c976c3a 100644
+--- a/src/agents/bash-tools.exec-types.ts
++++ b/src/agents/bash-tools.exec-types.ts
+@@ -2,6 +2,21 @@ import type { ExecAsk, ExecHost, ExecSecurity } from "../infra/exec-approvals.js
+ import type { SafeBinProfileFixture } from "../infra/exec-safe-bin-policy.js";
+ import type { BashSandboxConfig } from "./bash-tools.shared.js";
+ 
++/**
++ * PERSONAL BUILD: Main session execution policy.
++ * Controls restrictions on exec commands in the main agent session.
++ */
++export type ExecMainSessionPolicy = {
++  /** Block long-running foreground commands in main session. */
++  forbidLongExec?: boolean;
++  /** Require background=true for all exec in main session. */
++  requireBackgroundForExec?: boolean;
++  /** Maximum allowed timeout (seconds) for foreground exec in main session. */
++  maxExecTimeoutSec?: number;
++  /** Block SSH-related commands (ssh, scp, sftp, rsync over ssh). */
++  blockSshCommands?: boolean;
++};
++
+ export type ExecToolDefaults = {
+   host?: ExecHost;
+   security?: ExecSecurity;
+@@ -27,6 +42,8 @@ export type ExecToolDefaults = {
+   notifyOnExit?: boolean;
+   notifyOnExitEmptySuccess?: boolean;
+   cwd?: string;
++  /** PERSONAL BUILD: Main session execution policy. */
++  mainSessionPolicy?: ExecMainSessionPolicy;
+ };
+ 
+ export type ExecElevatedDefaults = {
+diff --git a/src/agents/bash-tools.exec.ts b/src/agents/bash-tools.exec.ts
+index 8a0bd3090..0c9118c42 100644
+--- a/src/agents/bash-tools.exec.ts
++++ b/src/agents/bash-tools.exec.ts
+@@ -31,6 +31,7 @@ import {
+ } from "./bash-tools.exec-runtime.js";
+ import type {
+   ExecElevatedDefaults,
++  ExecMainSessionPolicy,
+   ExecToolDefaults,
+   ExecToolDetails,
+ } from "./bash-tools.exec-types.js";
+@@ -48,6 +49,7 @@ import { assertSandboxPath } from "./sandbox-paths.js";
+ export type { BashSandboxConfig } from "./bash-tools.shared.js";
+ export type {
+   ExecElevatedDefaults,
++  ExecMainSessionPolicy,
+   ExecToolDefaults,
+   ExecToolDetails,
+ } from "./bash-tools.exec-types.js";
+@@ -148,6 +150,104 @@ async function validateScriptFileForShellBleed(params: {
+   }
+ }
+ 
++// PERSONAL BUILD: Main session detection and policy enforcement
++
++/**
++ * Check if the session key indicates a main agent session (not a subagent).
++ */
++function isMainAgentSession(sessionKey?: string): boolean {
++  const parsed = parseAgentSessionKey(sessionKey);
++  if (!parsed) {
++    // Fallback: if sessionKey is exactly "main" or ends with ":main"
++    const key = (sessionKey ?? "").trim().toLowerCase();
++    return key === "main" || key.endsWith(":main");
++  }
++  // A subagent session key contains "subagent:" in the rest portion
++  return !parsed.rest.includes("subagent:");
++}
++
++/**
++ * Resolve the maximum exec timeout for main session policy.
++ */
++function resolveMainSessionMaxExecTimeoutSec(policy?: ExecMainSessionPolicy): number {
++  const raw = policy?.maxExecTimeoutSec;
++  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
++    return 120; // Default: 2 minutes for main session foreground exec
++  }
++  return Math.floor(raw);
++}
++
++/**
++ * SSH command patterns to block in main session.
++ */
++const SSH_COMMAND_PATTERNS = [
++  /^\s*ssh\b/i,
++  /^\s*scp\b/i,
++  /^\s*sftp\b/i,
++  /^\s*rsync\s+.*-e\s+['"]?ssh/i,
++  /^\s*rsync\s+.*--rsh\s*=\s*['"]?ssh/i,
++  /^\s*rsync\s+[^/]*:/i, // rsync to remote (user@host:path)
++];
++
++function isSshCommand(command: string): boolean {
++  return SSH_COMMAND_PATTERNS.some((pattern) => pattern.test(command));
++}
++
++/**
++ * Apply main session policy checks to exec command.
++ * Throws if the command violates the policy.
++ */
++function enforceMainSessionPolicy(params: {
++  command: string;
++  sessionKey?: string;
++  policy?: ExecMainSessionPolicy;
++  timeout?: number;
++  background?: boolean;
++  yieldMs?: number;
++}): void {
++  const { command, sessionKey, policy, timeout, background, yieldMs } = params;
++
++  // Skip if not main session or no policy configured
++  if (!isMainAgentSession(sessionKey) || !policy) {
++    return;
++  }
++
++  // Check SSH block
++  if (policy.blockSshCommands && isSshCommand(command)) {
++    throw new Error(
++      [
++        "Main session policy blocked SSH command.",
++        "SSH/SCP/SFTP commands must be executed through a sub-session.",
++        "Use sessions_spawn to run this command in an isolated session.",
++      ].join("\n"),
++    );
++  }
++
++  // Check long exec block
++  if (policy.forbidLongExec) {
++    const maxExecTimeoutSec = resolveMainSessionMaxExecTimeoutSec(policy);
++    const backgroundRequested = background === true;
++    const yieldRequested = typeof yieldMs === "number";
++    const yieldExceedsLimit = !yieldRequested || yieldMs > 120_000;
++    const timeoutMissingOrTooLarge =
++      timeout === undefined || timeout <= 0 || timeout > maxExecTimeoutSec;
++
++    const longExecByTimeout = timeoutMissingOrTooLarge;
++    const longExecByForeground =
++      !backgroundRequested && (policy.requireBackgroundForExec || yieldExceedsLimit);
++
++    if (longExecByTimeout || longExecByForeground) {
++      throw new Error(
++        [
++          `Main session policy blocked exec: command appears long-running.`,
++          `For main session, timeout must be <= ${maxExecTimeoutSec}s and long runs must use background=true.`,
++          "Use sessions_spawn for longer tasks, or set background=true with an appropriate timeout.",
++        ].join("\n"),
++      );
++    }
++  }
++}
++
+ export function createExecTool(
+   defaults?: ExecToolDefaults,
+   // oxlint-disable-next-line typescript/no-explicit-any
+@@ -226,6 +326,16 @@ export function createExecTool(
+         throw new Error("Provide a command to start.");
+       }
+ 
++      // PERSONAL BUILD: Enforce main session policy
++      enforceMainSessionPolicy({
++        command: params.command,
++        sessionKey: defaults?.sessionKey,
++        policy: defaults?.mainSessionPolicy,
++        timeout: params.timeout,
++        background: params.background,
++        yieldMs: params.yieldMs,
++      });
++
+       const maxOutput = DEFAULT_MAX_OUTPUT;
+       const pendingMaxOutput = DEFAULT_PENDING_MAX_OUTPUT;
+       const warnings: string[] = [];
+-- 
+2.25.1
+

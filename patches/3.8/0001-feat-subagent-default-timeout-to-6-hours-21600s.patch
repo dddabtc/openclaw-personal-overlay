@@ -1,0 +1,36 @@
+From ab24bde43fa2422f4278ecba7e5a5058e5bb08e4 Mon Sep 17 00:00:00 2001
+From: subagent-bot <subagent-bot@example.com>
+Date: Sun, 8 Mar 2026 08:13:03 -0300
+Subject: [PATCH 1/4] feat(subagent): default timeout to 6 hours (21600s)
+
+PERSONAL BUILD: Change default subagent timeout from 0 (no timeout) to
+21600 seconds (6 hours), giving complex tasks sufficient time to complete.
+---
+ src/agents/subagent-spawn.ts | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/src/agents/subagent-spawn.ts b/src/agents/subagent-spawn.ts
+index f2a635521..001f92f35 100644
+--- a/src/agents/subagent-spawn.ts
++++ b/src/agents/subagent-spawn.ts
+@@ -283,13 +283,14 @@ export async function spawnSubagentDirect(
+   const cfg = loadConfig();
+ 
+   // When agent omits runTimeoutSeconds, use the config default.
+-  // Falls back to 0 (no timeout) if config key is also unset,
+-  // preserving current behavior for existing deployments.
++  // Falls back to 21600 (6 hours) if config key is also unset,
++  // giving complex tasks sufficient time to complete.
++  const PERSONAL_DEFAULT_SUBAGENT_TIMEOUT_SEC = 21600; // 6 hours
+   const cfgSubagentTimeout =
+     typeof cfg?.agents?.defaults?.subagents?.runTimeoutSeconds === "number" &&
+     Number.isFinite(cfg.agents.defaults.subagents.runTimeoutSeconds)
+       ? Math.max(0, Math.floor(cfg.agents.defaults.subagents.runTimeoutSeconds))
+-      : 0;
++      : PERSONAL_DEFAULT_SUBAGENT_TIMEOUT_SEC;
+   const runTimeoutSeconds =
+     typeof params.runTimeoutSeconds === "number" && Number.isFinite(params.runTimeoutSeconds)
+       ? Math.max(0, Math.floor(params.runTimeoutSeconds))
+-- 
+2.25.1
+

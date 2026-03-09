@@ -161,10 +161,19 @@
       "notes": "Primary supported baseline; ZMQ optional experimental layer is excluded/disabled by default"
     },
     {
+      "id": "oc-2026.3.8-personal-overlay",
       "openclawVersion": "2026.3.8",
-      "status": "compatible",
-      "notes": "auto-added by autofix",
-      "commitSha": "3caab9260cb0a0064e6a37b2de3bedc8a547e599"
+      "commitSha": "3caab9260cb0a0064e6a37b2de3bedc8a547e599",
+      "upstreamBaseCommit": "3caab9260cb0a0064e6a37b2de3bedc8a547e599",
+      "overlayHeadCommit": "a37d4949b",
+      "patchSetDir": "patches/3.8",
+      "binaryArtifact": "dist-overlay.tar.gz",
+      "atlasCompat": {
+        "memory_search": "expected",
+        "memory_get": "expected"
+      },
+      "notes": "Rebased patchset for v2026.3.8",
+      "status": "supported"
     }
   ],
   "defaultOverlayPolicy": {
