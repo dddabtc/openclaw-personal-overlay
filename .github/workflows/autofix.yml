@@ -60,7 +60,13 @@ jobs:
           if existing:
               print(f"Version {version} already in compatibility.json, nothing to do.")
               sys.exit(0)
-          supported.append({'openclawVersion': version, 'status': 'compatible', 'notes': 'auto-added by autofix'})
+          import subprocess
+          result = subprocess.run(['npm', 'view', f'openclaw@{version}', 'gitHead'], capture_output=True, text=True)
+          commit_sha = result.stdout.strip()
+          if not commit_sha:
+              print(f"WARNING: could not resolve commitSha for openclaw@{version}")
+              sys.exit(1)
+          supported.append({'openclawVersion': version, 'commitSha': commit_sha, 'status': 'compatible', 'notes': 'auto-added by autofix'})
           data['supported'] = supported
           with open(path, 'w', encoding='utf-8') as f:
               json.dump(data, f, indent=2, ensure_ascii=False)
