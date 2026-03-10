@@ -10,14 +10,27 @@ trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK"
 
 tar -xzf "$ARTIFACT" -C "$WORK"
-META="$WORK/dist-overlay/metadata.json"
-PAYLOAD="$WORK/dist-overlay/payload"
+
+# Resolve extracted root robustly (supports custom out-prefix archives)
+mapfile -t meta_candidates < <(find "$WORK" -mindepth 2 -maxdepth 2 -type f -name metadata.json -printf '%h\n' | sort -u)
+if [[ ${#meta_candidates[@]} -ne 1 ]]; then
+  echo "[ERR] expected exactly one extracted overlay root with metadata.json, found ${#meta_candidates[@]}" >&2
+  find "$WORK" -mindepth 1 -maxdepth 2 -type d -print >&2 || true
+  exit 2
+fi
+EXTRACT_ROOT="${meta_candidates[0]}"
+META="$EXTRACT_ROOT/metadata.json"
+PAYLOAD="$EXTRACT_ROOT/payload"
+[[ -d "$PAYLOAD" ]] || { echo "[ERR] extracted payload directory missing: $PAYLOAD" >&2; exit 2; }
 
 python3 - <<PY
 import json, pathlib, sys
 meta = json.loads(pathlib.Path('$META').read_text())
 assert meta['overlayVersion'] == '$EXPECTED_OVERLAY', f"overlayVersion mismatch: {meta['overlayVersion']}"
 assert meta['targetOpenclawVersion'] == '$EXPECTED_VERSION', f"targetOpenclawVersion mismatch: {meta['targetOpenclawVersion']}"
+mode = meta.get('payloadMode')
+if mode is not None:
+    assert mode in ('full-replace', 'diff'), f"invalid payloadMode: {mode}"
 print('[ok] metadata checks')
 PY
 
@@ -30,13 +43,18 @@ mkdir -p "$WORK/clean"
 # - new files (not in upstream dist) are allowed only when transitively imported
 #   by another payload JS file (dependency closure), i.e. no orphan extras.
 python3 - <<PY
-import pathlib, re, os
+import json, pathlib, re, os
 base = pathlib.Path('$WORK/clean/package/dist')
 payload = pathlib.Path('$PAYLOAD/dist')
 base_set = {p.relative_to(base).as_posix() for p in base.rglob('*') if p.is_file()}
 payload_files = [p.relative_to(payload).as_posix() for p in payload.rglob('*') if p.is_file()]
 payload_set = set(payload_files)
-full_replace = os.environ.get('FULL_REPLACE', '0') == '1'
+meta = json.loads(pathlib.Path('$META').read_text())
+env_full_replace = os.environ.get('FULL_REPLACE')
+if env_full_replace is not None:
+    full_replace = env_full_replace == '1'
+else:
+    full_replace = (meta.get('payloadMode') == 'full-replace')
 if full_replace:
     assert 'entry.js' in payload_set, 'FULL_REPLACE mode requires entry.js in payload'
 else:

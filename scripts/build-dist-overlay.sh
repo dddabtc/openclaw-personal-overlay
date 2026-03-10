@@ -191,6 +191,7 @@ cat > "$OUT_DIR/metadata.json" <<JSON
   "overlayVersion": "$OVERLAY_VERSION",
   "targetOpenclawVersion": "$TARGET_VERSION",
   "targetCommitSha": "$TARGET_COMMIT",
+  "payloadMode": "$( [[ "$FULL_REPLACE" == "1" ]] && echo full-replace || echo diff )",
   "builtAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 JSON
