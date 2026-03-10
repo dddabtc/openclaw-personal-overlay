@@ -22,30 +22,29 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Enable corepack
+        run: corepack enable
       - name: Validate compatibility matrix
         run: python3 scripts/validate-compatibility.py compatibility.json
-      - name: Validate dist export checker against upstream npm package
+      - name: Resolve latest supported target
+        id: compat
         run: |
-          set -euo pipefail
-          v="$(python3 - <<'PY'
-          import json
+          python3 - <<'PY'
+          import json, os, sys
           with open('compatibility.json','r',encoding='utf-8') as f:
               supported = json.load(f).get('supported', [])
-          if not supported:
-              raise SystemExit('no supported versions in compatibility.json')
-          print(supported[0]['openclawVersion'])
+          target = next((e for e in supported if e.get('status') != 'deprecated'), None)
+          if target is None:
+              raise SystemExit('no supported target found')
+          out = os.environ['GITHUB_OUTPUT']
+          with open(out, 'a', encoding='utf-8') as gh:
+              gh.write(f"target_version={target['openclawVersion']}\n")
+              gh.write(f"target_commit={target['commitSha']}\n")
+              gh.write(f"patch_set_dir={target['patchSetDir']}\n")
           PY
-          )"
-          tmp="$(mktemp -d)"
-          trap 'rm -rf "$tmp"' EXIT
-          (
-            cd "$tmp"
-            npm pack --silent "openclaw@$v" >/dev/null
-            tar -xzf openclaw-*.tgz
-            mkdir -p payload
-            cp -a package/dist payload/dist
-            cp package/package.json payload/package.json
-          )
-          bash scripts/validate-dist-exports.sh "$tmp/payload" "$v"
-      - name: Run overlay smoke tests
-        run: bash tests/openclaw-personal.test.sh
+      - name: Run release gate against latest supported target
+        run: |
+          scripts/ci-release-gate.sh \
+            --version "${{ steps.compat.outputs.target_version }}" \
+            --commit "${{ steps.compat.outputs.target_commit }}" \
+            --patch-dir "${{ steps.compat.outputs.patch_set_dir }}"
