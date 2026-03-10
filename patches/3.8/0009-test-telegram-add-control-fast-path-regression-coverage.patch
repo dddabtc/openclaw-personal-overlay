@@ -1,0 +1,33 @@
+From 866c8b3f2c166e204f538e2f774ec0517543ab0a Mon Sep 17 00:00:00 2001
+From: op173 <op173@example.com>
+Date: Tue, 10 Mar 2026 13:56:06 -0300
+Subject: [PATCH] test(telegram): add control fast-path regression coverage
+
+---
+ src/telegram/sequential-key.test.ts | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/src/telegram/sequential-key.test.ts b/src/telegram/sequential-key.test.ts
+index 7dc09af25..c4b0a532c 100644
+--- a/src/telegram/sequential-key.test.ts
++++ b/src/telegram/sequential-key.test.ts
+@@ -59,7 +59,15 @@ describe("getTelegramSequentialKey", () => {
+       { message: mockMessage({ chat: mockChat({ id: 123 }), text: "/stop" }) },
+       "telegram:123:control",
+     ],
+-    [{ message: mockMessage({ chat: mockChat({ id: 123 }), text: "/status" }) }, "telegram:123"],
++    [{ message: mockMessage({ chat: mockChat({ id: 123 }), text: "/status" }) }, "telegram:123:control"],
++    [{ message: mockMessage({ chat: mockChat({ id: 123 }), text: "/help" }) }, "telegram:123:control"],
++    [
++      {
++        message: mockMessage({ chat: mockChat({ id: 123 }), text: "/status@mybot" }),
++        me: { id: 1, is_bot: true, first_name: "mybot", username: "mybot" },
++      },
++      "telegram:123:control",
++    ],
+     [
+       { message: mockMessage({ chat: mockChat({ id: 123 }), text: "stop" }) },
+       "telegram:123:control",
+-- 
+2.25.1
+

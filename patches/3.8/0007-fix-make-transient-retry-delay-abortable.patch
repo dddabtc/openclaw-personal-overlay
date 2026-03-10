@@ -1,0 +1,42 @@
+From 7f94a7b124b607beadf607ffa9969fd889f945e0 Mon Sep 17 00:00:00 2001
+From: dda <dda@ddadeMac-mini.local>
+Date: Tue, 10 Mar 2026 12:07:01 -0300
+Subject: [PATCH] fix(reply): make transient retry delay abortable
+
+---
+ src/auto-reply/reply/agent-runner-execution.ts | 13 +++++++++----
+ 1 file changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/src/auto-reply/reply/agent-runner-execution.ts b/src/auto-reply/reply/agent-runner-execution.ts
+index 6748e3c..b00f47b 100644
+--- a/src/auto-reply/reply/agent-runner-execution.ts
++++ b/src/auto-reply/reply/agent-runner-execution.ts
+@@ -1,5 +1,6 @@
+ import crypto from "node:crypto";
+ import fs from "node:fs";
++import { setTimeout as delay } from "node:timers/promises";
+ import { resolveBootstrapWarningSignaturesSeen } from "../../agents/bootstrap-budget.js";
+ import { runCliAgent } from "../../agents/cli-runner.js";
+ import { getCliSessionId } from "../../agents/cli-session.js";
+@@ -598,10 +599,14 @@ export async function runAgentTurnWithFallback(params: {
+         defaultRuntime.error(
+           `Transient HTTP provider error before reply (${message}). Retrying once in ${TRANSIENT_HTTP_RETRY_DELAY_MS}ms.`,
+         );
+-        await new Promise<void>((resolve) => {
+-          setTimeout(resolve, TRANSIENT_HTTP_RETRY_DELAY_MS);
+-        });
+-        continue;
++        try {
++          await delay(TRANSIENT_HTTP_RETRY_DELAY_MS, undefined, {
++            signal: params.opts?.abortSignal,
++          });
++          continue;
++        } catch {
++          // Abort should short-circuit the retry wait and fall through to final error handling.
++        }
+       }
+ 
+       defaultRuntime.error(`Embedded agent failed before reply: ${message}`);
+-- 
+2.50.1 (Apple Git-155)
+

@@ -71,6 +71,13 @@ if extra:
 print('[ok] dist payload scope checks')
 PY
 
+# PERSONAL BUILD: placeholder must never ship unreplaced
+if grep -R --line-number "__PERSONAL_BUILD_DATE__" "$PAYLOAD/dist" >/dev/null 2>&1; then
+  echo "[ERR] __PERSONAL_BUILD_DATE__ placeholder leaked into release payload" >&2
+  exit 9
+fi
+echo "[ok] PERSONAL_BUILD_DATE placeholder check"
+
 # package.json exports sanity (if package.json included)
 if [[ -f "$PAYLOAD/package.json" ]]; then
 python3 - <<PY

@@ -1,0 +1,162 @@
+From 826088a2768f62b6908ce8b40e4c7fa3d922cd27 Mon Sep 17 00:00:00 2001
+From: dda <dda@ddadeMac-mini.local>
+Date: Tue, 10 Mar 2026 12:06:27 -0300
+Subject: [PATCH] fix(exec): hardcode main-session policy defaults for
+ apply-only behavior
+
+---
+ ...h-tools.exec.main-session-defaults.test.ts | 31 ++++++++++
+ src/agents/bash-tools.exec.ts                 | 59 +++++++++++++------
+ 2 files changed, 72 insertions(+), 18 deletions(-)
+ create mode 100644 src/agents/bash-tools.exec.main-session-defaults.test.ts
+
+diff --git a/src/agents/bash-tools.exec.main-session-defaults.test.ts b/src/agents/bash-tools.exec.main-session-defaults.test.ts
+new file mode 100644
+index 0000000..1c9003e
+--- /dev/null
++++ b/src/agents/bash-tools.exec.main-session-defaults.test.ts
+@@ -0,0 +1,31 @@
++import { describe, expect, it } from "vitest";
++import { createExecTool } from "./bash-tools.exec.js";
++
++const createMainSessionExecTool = () =>
++  createExecTool({
++    sessionKey: "agent:main:main",
++    security: "full",
++    ask: "off",
++  });
++
++describe("main-session exec defaults", () => {
++  it("blocks long foreground exec without policy config", async () => {
++    const tool = createMainSessionExecTool();
++    await expect(
++      tool.execute("call", { command: "echo hello", timeout: 999 }, undefined),
++    ).rejects.toThrow(/Main session policy blocked exec/);
++  });
++
++  it("blocks ssh command without policy config", async () => {
++    const tool = createMainSessionExecTool();
++    await expect(
++      tool.execute("call", { command: "ssh user@example.com", timeout: 10 }, undefined),
++    ).rejects.toThrow(/blocked SSH command/);
++  });
++
++  it("allows short background-safe exec", async () => {
++    const tool = createMainSessionExecTool();
++    const res = await tool.execute("call", { command: "echo ok", timeout: 10, yieldMs: 1000 }, undefined);
++    expect(String((res.details as { stdout?: string }).stdout ?? "")).toContain("ok");
++  });
++});
+diff --git a/src/agents/bash-tools.exec.ts b/src/agents/bash-tools.exec.ts
+index 0420f00..9fc9305 100644
+--- a/src/agents/bash-tools.exec.ts
++++ b/src/agents/bash-tools.exec.ts
+@@ -152,6 +152,16 @@ async function validateScriptFileForShellBleed(params: {
+ 
+ // PERSONAL BUILD: Main session detection and policy enforcement
+ 
++const PERSONAL_MAIN_SESSION_POLICY_DEFAULTS: Required<
++  Pick<ExecMainSessionPolicy, "forbidLongExec" | "requireBackgroundForExec" | "blockSshCommands" | "maxOutputBytes">
++> & { maxExecTimeoutSec: number } = {
++  forbidLongExec: true,
++  requireBackgroundForExec: true,
++  maxExecTimeoutSec: 120,
++  blockSshCommands: true,
++  maxOutputBytes: 51_200,
++};
++
+ /**
+  * Check if the session key indicates a main agent session (not a subagent).
+  */
+@@ -169,12 +179,24 @@ function isMainAgentSession(sessionKey?: string): boolean {
+ /**
+  * Resolve the maximum exec timeout for main session policy.
+  */
+-function resolveMainSessionMaxExecTimeoutSec(policy?: ExecMainSessionPolicy): number {
+-  const raw = policy?.maxExecTimeoutSec;
+-  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
+-    return 120; // Default: 2 minutes for main session foreground exec
+-  }
+-  return Math.floor(raw);
++function resolveMainSessionPolicy(policy?: ExecMainSessionPolicy): Required<ExecMainSessionPolicy> {
++  return {
++    forbidLongExec: policy?.forbidLongExec ?? PERSONAL_MAIN_SESSION_POLICY_DEFAULTS.forbidLongExec,
++    requireBackgroundForExec:
++      policy?.requireBackgroundForExec ??
++      PERSONAL_MAIN_SESSION_POLICY_DEFAULTS.requireBackgroundForExec,
++    maxExecTimeoutSec:
++      typeof policy?.maxExecTimeoutSec === "number" &&
++      Number.isFinite(policy.maxExecTimeoutSec) &&
++      policy.maxExecTimeoutSec > 0
++        ? Math.floor(policy.maxExecTimeoutSec)
++        : PERSONAL_MAIN_SESSION_POLICY_DEFAULTS.maxExecTimeoutSec,
++    blockSshCommands: policy?.blockSshCommands ?? PERSONAL_MAIN_SESSION_POLICY_DEFAULTS.blockSshCommands,
++    maxOutputBytes:
++      typeof policy?.maxOutputBytes === "number" && Number.isFinite(policy.maxOutputBytes)
++        ? Math.max(0, Math.floor(policy.maxOutputBytes))
++        : PERSONAL_MAIN_SESSION_POLICY_DEFAULTS.maxOutputBytes,
++  };
+ }
+ 
+ /**
+@@ -207,13 +229,15 @@ function enforceMainSessionPolicy(params: {
+ }): void {
+   const { command, sessionKey, policy, timeout, background, yieldMs } = params;
+ 
+-  // Skip if not main session or no policy configured
+-  if (!isMainAgentSession(sessionKey) || !policy) {
++  // Skip if not main session
++  if (!isMainAgentSession(sessionKey)) {
+     return;
+   }
+ 
++  const effectivePolicy = resolveMainSessionPolicy(policy);
++
+   // Check SSH block
+-  if (policy.blockSshCommands && isSshCommand(command)) {
++  if (effectivePolicy.blockSshCommands && isSshCommand(command)) {
+     throw new Error(
+       [
+         "Main session policy blocked SSH command.",
+@@ -224,8 +248,8 @@ function enforceMainSessionPolicy(params: {
+   }
+ 
+   // Check long exec block
+-  if (policy.forbidLongExec) {
+-    const maxExecTimeoutSec = resolveMainSessionMaxExecTimeoutSec(policy);
++  if (effectivePolicy.forbidLongExec) {
++    const maxExecTimeoutSec = effectivePolicy.maxExecTimeoutSec;
+     const backgroundRequested = background === true;
+     const yieldRequested = typeof yieldMs === "number";
+     const yieldExceedsLimit = !yieldRequested || yieldMs > 120_000;
+@@ -234,7 +258,7 @@ function enforceMainSessionPolicy(params: {
+ 
+     const longExecByTimeout = timeoutMissingOrTooLarge;
+     const longExecByForeground =
+-      !backgroundRequested && (policy.requireBackgroundForExec || yieldExceedsLimit);
++      !backgroundRequested && (effectivePolicy.requireBackgroundForExec || yieldExceedsLimit);
+ 
+     if (longExecByTimeout || longExecByForeground) {
+       throw new Error(
+@@ -337,13 +361,12 @@ export function createExecTool(
+       });
+ 
+       // PERSONAL BUILD: Apply output cap from main session policy
+-      const policyMaxOutput = defaults?.mainSessionPolicy?.maxOutputBytes;
++      const effectiveMainPolicy = isMainAgentSession(defaults?.sessionKey)
++        ? resolveMainSessionPolicy(defaults?.mainSessionPolicy)
++        : undefined;
++      const policyMaxOutput = effectiveMainPolicy?.maxOutputBytes;
+       const mainSessionOutputCap =
+-        isMainAgentSession(defaults?.sessionKey) &&
+-        typeof policyMaxOutput === "number" &&
+-        policyMaxOutput > 0
+-          ? policyMaxOutput
+-          : undefined;
++        typeof policyMaxOutput === "number" && policyMaxOutput > 0 ? policyMaxOutput : undefined;
+       const maxOutput = mainSessionOutputCap
+         ? Math.min(DEFAULT_MAX_OUTPUT, mainSessionOutputCap)
+         : DEFAULT_MAX_OUTPUT;
+-- 
+2.50.1 (Apple Git-155)
+
