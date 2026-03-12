@@ -60,10 +60,10 @@ jobs:
             exit 1
           fi
 
-          python3 - <<PY
+          COMMIT_SHA="$commit_sha" python3 - <<PY
           import json, os
           version = os.environ['UPSTREAM_TAG'].lstrip('v')
-          commit_sha = os.environ['commit_sha']
+          commit_sha = os.environ['COMMIT_SHA']
           path = 'compatibility.json'
           with open(path, 'r', encoding='utf-8') as f:
               data = json.load(f)
@@ -111,13 +111,6 @@ jobs:
           print('changed=' + ('true' if changed else 'false'))
           PY
 
-          changed=$(python3 - <<'PY'
-          import json
-          from pathlib import Path
-          # quick diff check based on git status later; set deterministic output marker
-          print('true' if Path('compatibility.json').exists() else 'false')
-          PY
-          )
           echo "resolved_version=${version}" >> "$GITHUB_OUTPUT"
           echo "resolved_commit=${commit_sha}" >> "$GITHUB_OUTPUT"
 
