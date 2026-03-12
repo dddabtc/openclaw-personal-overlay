@@ -76,7 +76,11 @@ jobs:
                   break
 
           if exists is None:
-              latest_supported = next((s for s in supported if s.get('status') != 'deprecated' and s.get('patchSetDir')), None)
+              import re
+              def vkey(x):
+                  return tuple(int(n) for n in re.findall(r'\d+', x or '0'))
+              candidates = [s for s in supported if s.get('status') != 'deprecated' and s.get('patchSetDir') and s.get('openclawVersion')]
+              latest_supported = sorted(candidates, key=lambda s: vkey(s.get('openclawVersion')))[-1] if candidates else None
               patch_dir = latest_supported.get('patchSetDir') if latest_supported else f"patches/{version.split('.')[-1]}"
               entry = {
                   'id': f'oc-{version}-personal-overlay',
