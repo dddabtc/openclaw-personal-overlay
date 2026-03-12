@@ -32,6 +32,7 @@ The current patch set focuses on stability and responsiveness:
 | **Control fast-path** | Routes `/stop` and `/status` through a dedicated control lane so they never get stuck behind a hung session |
 | **Abortable retry** | Makes transient retry delays interruptible |
 | **Sub-agent timeout** | Extends default sub-agent session timeout to 6 hours (upstream default is too short for complex tasks) |
+| **Freshest descendant fallback** | Prevents stale descendant sub-agent summaries from resurfacing in current fallback replies |
 
 ## Installation
 
