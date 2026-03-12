@@ -1,7 +1,7 @@
 name: support-release-rollover
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: {}
   schedule:
     - cron: '43 */12 * * *'
   push:
