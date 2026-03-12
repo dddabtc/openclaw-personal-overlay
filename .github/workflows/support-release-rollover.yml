@@ -4,6 +4,11 @@ name: support-release-rollover
   workflow_dispatch: {}
   schedule:
     - cron: '43 */12 * * *'
+  push:
+    branches: [main]
+    paths:
+      - 'compatibility.json'
+      - '.github/workflows/support-release-rollover.yml'
 
 permissions:
   contents: write
@@ -13,12 +18,11 @@ jobs:
     runs-on: ubuntu-latest
     env:
       KEEP_SUPPORT_BRANCHES: '20'
-      REPO: ${{ github.repository }}
+      REPO: dddabtc/openclaw-personal-overlay
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.OC_GH_TOKEN }}
 
       - name: Resolve latest non-deprecated compatibility entry
         id: latest
@@ -56,9 +60,9 @@ PY
           git checkout -B "$BRANCH" origin/main
           git push origin "$BRANCH" --force-with-lease
 
-      - name: Ensure support release exists (idempotent)
+      - name: Publish release tag for latest compatible version (idempotent)
         env:
-          GH_TOKEN: ${{ secrets.OC_GH_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           TAG='${{ steps.latest.outputs.tag }}'
@@ -77,14 +81,18 @@ PY
             --notes "Auto-published support release for OpenClaw ${VERSION}\n\ncompat: ${VERSION} @ ${SHA}\n\nFor this version line, use support branch: ${{ steps.latest.outputs.branch }}"
 
       - name: Prune old support branches (keep latest N)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           KEEP="${KEEP_SUPPORT_BRANCHES}"
           mapfile -t all < <(git for-each-ref refs/remotes/origin/support/v* --sort=-committerdate --format='%(refname:short)' | sed 's#^origin/##')
+          echo "Found ${#all[@]} support branches"
           if (( ${#all[@]} <= KEEP )); then
             echo "No pruning needed"
             exit 0
           fi
           for b in "${all[@]:KEEP}"; do
+            echo "Deleting old support branch: $b"
             git push origin --delete "$b" || true
           done
