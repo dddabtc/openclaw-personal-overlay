@@ -1,0 +1,150 @@
+name: autofix
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: Reason for triggering autofix
+        required: false
+        type: string
+        default: ''
+      source_run_id:
+        description: Source workflow run ID that triggered this autofix
+        required: false
+        type: string
+        default: ''
+      upstream_tag:
+        description: Upstream tag to target
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  autofix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.OC_GH_TOKEN }}
+
+      - name: Enforce single-token secret
+        env:
+          SINGLE_TOKEN: ${{ secrets.OC_GH_TOKEN }}
+        run: |
+          if [ -z "${SINGLE_TOKEN}" ]; then
+            echo '{"error_code":"E_SINGLE_TOKEN_MISSING","required_secret":"OC_GH_TOKEN"}'
+            exit 1
+          fi
+
+      - name: Log autofix trigger
+        run: |
+          echo "reason=${{ github.event.inputs.reason }}"
+          echo "source_run_id=${{ github.event.inputs.source_run_id }}"
+          echo "upstream_tag=${{ github.event.inputs.upstream_tag }}"
+
+      - name: Update compatibility.json for upstream tag
+        id: update
+        env:
+          UPSTREAM_TAG: ${{ github.event.inputs.upstream_tag }}
+        run: |
+          set -euo pipefail
+          version="${UPSTREAM_TAG#v}"
+          commit_sha="$(npm view "openclaw@${version}" gitHead 2>/dev/null || true)"
+          if [ -z "$commit_sha" ]; then
+            echo "Cannot resolve gitHead for openclaw@${version}" >&2
+            exit 1
+          fi
+
+          python3 - <<PY
+          import json, os
+          version = os.environ['UPSTREAM_TAG'].lstrip('v')
+          commit_sha = os.environ['commit_sha']
+          path = 'compatibility.json'
+          with open(path, 'r', encoding='utf-8') as f:
+              data = json.load(f)
+          supported = data.get('supported', [])
+
+          exists = None
+          for s in supported:
+              if s.get('openclawVersion') == version:
+                  exists = s
+                  break
+
+          if exists is None:
+              latest_supported = next((s for s in supported if s.get('status') != 'deprecated' and s.get('patchSetDir')), None)
+              patch_dir = latest_supported.get('patchSetDir') if latest_supported else f"patches/{version.split('.')[-1]}"
+              entry = {
+                  'id': f'oc-{version}-personal-overlay',
+                  'openclawVersion': version,
+                  'commitSha': commit_sha,
+                  'upstreamBaseCommit': commit_sha,
+                  'patchSetDir': patch_dir,
+                  'binaryArtifact': 'dist-overlay.tar.gz',
+                  'atlasCompat': {'memory_search': 'expected', 'memory_get': 'expected'},
+                  'status': 'compatible',
+                  'notes': 'auto-added by autofix',
+              }
+              supported.insert(0, entry)
+              changed = True
+          else:
+              changed = False
+              if exists.get('commitSha') != commit_sha:
+                  exists['commitSha'] = commit_sha
+                  changed = True
+              if not exists.get('upstreamBaseCommit'):
+                  exists['upstreamBaseCommit'] = commit_sha
+                  changed = True
+              if not exists.get('status'):
+                  exists['status'] = 'compatible'
+                  changed = True
+
+          if changed:
+              data['supported'] = supported
+              with open(path, 'w', encoding='utf-8') as f:
+                  json.dump(data, f, indent=2, ensure_ascii=False)
+                  f.write('\n')
+          print('changed=' + ('true' if changed else 'false'))
+          PY
+
+          changed=$(python3 - <<'PY'
+          import json
+          from pathlib import Path
+          # quick diff check based on git status later; set deterministic output marker
+          print('true' if Path('compatibility.json').exists() else 'false')
+          PY
+          )
+          echo "resolved_version=${version}" >> "$GITHUB_OUTPUT"
+          echo "resolved_commit=${commit_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate compatibility file
+        run: python3 scripts/validate-compatibility.py compatibility.json
+
+      - name: Commit and push if changed
+        id: commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No changes to commit."
+          else
+            git add compatibility.json
+            git commit -m "chore(compat): auto-add ${{ github.event.inputs.upstream_tag }} support baseline"
+            git push origin HEAD:main
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Trigger release workflow for upstream tag
+        env:
+          GH_TOKEN: ${{ secrets.OC_GH_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh workflow run release.yml --repo "${{ github.repository }}" \
+            -f release_tag="overlay-v${{ steps.update.outputs.resolved_version }}" \
+            -f upstream_tag="v${{ steps.update.outputs.resolved_version }}" \
+            -f source_run_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"

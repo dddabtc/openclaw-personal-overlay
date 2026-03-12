@@ -1,0 +1,194 @@
+name: auto-compat
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      force_full_run:
+        description: Ignore failure residue and run full flow
+        required: false
+        type: boolean
+        default: false
+      upstream_repo:
+        description: Upstream release source repo
+        required: false
+        type: string
+        default: openclaw/openclaw
+
+permissions:
+  contents: write
+  issues: write
+  actions: write
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      has_residue: ${{ steps.failstate.outputs.has_residue }}
+      run_full: ${{ steps.gate.outputs.run_full }}
+      needs_update: ${{ steps.compare.outputs.needs_update }}
+      latest_upstream: ${{ steps.upstream.outputs.latest_tag }}
+      release_tag: ${{ steps.tags.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.OC_GH_TOKEN }}
+      - name: Enforce single-token secret
+        env:
+          SINGLE_TOKEN: ${{ secrets.OC_GH_TOKEN }}
+        run: |
+          if [ -z "${SINGLE_TOKEN}" ]; then
+            echo '{"error_code":"E_SINGLE_TOKEN_MISSING","required_secret":"OC_GH_TOKEN"}'
+            exit 1
+          fi
+
+      - name: Failure residue state (persistent issue)
+        id: failstate
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = 'autocompat-failure-state';
+            const {owner, repo} = context.repo;
+            const q = `repo:${owner}/${repo} is:issue is:open in:title "${title}"`;
+            const result = await github.rest.search.issuesAndPullRequests({q});
+            const hit = result.data.items.find(i => i.title === title) || null;
+            core.setOutput('has_residue', hit ? 'true' : 'false');
+
+      - name: Resolve latest upstream version from npm + verify upstream tag exists
+        id: upstream
+        env:
+          GH_TOKEN: ${{ secrets.OC_GH_TOKEN }}
+          UPSTREAM_REPO: ${{ github.event.inputs.upstream_repo || 'openclaw/openclaw' }}
+        run: |
+          set -euo pipefail
+          npm_latest="$(npm view openclaw version)"
+          if [ -z "$npm_latest" ]; then
+            echo "Failed to resolve latest openclaw version from npm" >&2
+            exit 1
+          fi
+
+          tag="v${npm_latest}"
+          gh api "repos/${UPSTREAM_REPO}/git/ref/tags/${tag}" >/dev/null
+
+          echo "latest_tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Compare compatibility support vs upstream
+        id: compare
+        env:
+          LATEST: ${{ steps.upstream.outputs.latest_tag }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          def norm(v):
+            return tuple(int(x) for x in re.findall(r'\d+', v))
+          latest = os.environ['LATEST'].lstrip('v')
+          with open('compatibility.json','r',encoding='utf-8') as f:
+            data = json.load(f)
+          supported = [s.get('openclawVersion') for s in data.get('supported',[]) if s.get('openclawVersion')]
+          max_supported = sorted(supported, key=norm)[-1] if supported else '0'
+          present = latest in set(supported)
+          needs_update = not present
+          with open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8') as o:
+            print(f"max_supported={max_supported}", file=o)
+            print(f"needs_update={'true' if needs_update else 'false'}", file=o)
+          PY
+
+      - name: Gate rules
+        id: gate
+        env:
+          FORCE: ${{ github.event.inputs.force_full_run || 'false' }}
+          HAS_RESIDUE: ${{ steps.failstate.outputs.has_residue }}
+          NEEDS_UPDATE: ${{ steps.compare.outputs.needs_update }}
+        run: |
+          run_full=false
+          if [ "$FORCE" = "true" ] || { [ "$NEEDS_UPDATE" = "false" ] && [ "$HAS_RESIDUE" = "false" ]; }; then
+            run_full=true
+          fi
+          echo "run_full=$run_full" >> "$GITHUB_OUTPUT"
+
+      - name: Compute release tag
+        id: tags
+        run: |
+          t="overlay-v${{ steps.upstream.outputs.latest_tag }}"
+          t="${t#overlay-vv}"
+          echo "release_tag=$t" >> "$GITHUB_OUTPUT"
+
+  auto-upgrade-pr:
+    needs: detect
+    if: needs.detect.outputs.needs_update == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger closed-loop autofix for upstream bump
+        env:
+          GH_TOKEN: ${{ secrets.OC_GH_TOKEN }}
+        run: |
+          gh workflow run autofix.yml --repo "${{ github.repository }}" \
+            -f reason="upstream bump to ${{ needs.detect.outputs.latest_upstream }}" \
+            -f source_run_id="${{ github.run_id }}" \
+            -f upstream_tag="${{ needs.detect.outputs.latest_upstream }}"
+
+  full-flow:
+    needs: detect
+    if: needs.detect.outputs.run_full == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Critical validation (cannot skip)
+        run: |
+          python3 scripts/validate-compatibility.py compatibility.json
+          bash tests/openclaw-personal.test.sh
+
+  release:
+    needs: [detect, full-flow]
+    if: needs.detect.outputs.run_full == 'true' && needs.full-flow.result == 'success'
+    uses: ./.github/workflows/release.yml
+    with:
+      release_tag: ${{ needs.detect.outputs.release_tag }}
+      upstream_tag: ${{ needs.detect.outputs.latest_upstream }}
+      source_run_url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    secrets: inherit
+
+  clear-residue-on-success:
+    needs: [detect, full-flow]
+    if: needs.detect.outputs.run_full == 'true' && success()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const title = 'autocompat-failure-state';
+            const {owner, repo} = context.repo;
+            const q = `repo:${owner}/${repo} is:issue is:open in:title "${title}"`;
+            const result = await github.rest.search.issuesAndPullRequests({q});
+            for (const issue of result.data.items.filter(i => i.title === title)) {
+              await github.rest.issues.update({owner, repo, issue_number: issue.number, state: 'closed'});
+            }
+
+  mark-failure-and-trigger-autofix:
+    needs: [detect, full-flow]
+    if: needs.detect.outputs.run_full == 'true' && needs.full-flow.result == 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Persist failure residue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = 'autocompat-failure-state';
+            const {owner, repo} = context.repo;
+            const q = `repo:${owner}/${repo} is:issue is:open in:title "${title}"`;
+            const result = await github.rest.search.issuesAndPullRequests({q});
+            const body = `autocompat residue recorded\nrun: https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}\ntime: ${new Date().toISOString()}`;
+            if (result.data.items.some(i => i.title === title)) return;
+            await github.rest.issues.create({
+              owner, repo, title, body,
+              labels: ['autocompat-failed']
+            });
+      - name: Trigger autofix chain
+        env:
+          GH_TOKEN: ${{ secrets.OC_GH_TOKEN }}
+        run: |
+          gh workflow run autofix.yml --repo "${{ github.repository }}" \
+            -f reason="autocompat full-flow failure" \
+            -f source_run_id="${{ github.run_id }}" \
+            -f upstream_tag="${{ needs.detect.outputs.latest_upstream }}"
