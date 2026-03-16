@@ -164,7 +164,7 @@ jobs:
 
   release:
     needs: [detect, full-flow]
-    if: needs.detect.outputs.run_full == 'true' && needs.full-flow.result == 'success'
+    if: needs.detect.outputs.run_full == 'true' && needs.full-flow.result == 'success' && github.ref_name == 'main'
     uses: ./.github/workflows/release.yml
     with:
       release_tag: ${{ needs.detect.outputs.release_tag }}
