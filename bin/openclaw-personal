@@ -462,6 +462,11 @@ regular_apply() {
 }
 JSON
 
+  # Apply runtime dist patches (cron timeout ceiling, etc.)
+  if [[ -x "$ROOT_DIR/scripts/patch-dist-cron-timeout.sh" ]]; then
+    "$ROOT_DIR/scripts/patch-dist-cron-timeout.sh" "$install_root" || log "WARN: cron timeout dist patch skipped (non-fatal)"
+  fi
+
   log "overlay applied successfully (overlayVersion=${overlay_version})"
 }
 
