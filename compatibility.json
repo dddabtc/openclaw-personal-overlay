@@ -214,7 +214,7 @@
         "memory_search": "expected",
         "memory_get": "expected"
       },
-      "notes": "Rebased patchset for v2026.3.8",
+      "notes": "Rebased patchset for v2026.3.8, including stale descendant fallback suppression.",
       "status": "supported"
     }
   ],
