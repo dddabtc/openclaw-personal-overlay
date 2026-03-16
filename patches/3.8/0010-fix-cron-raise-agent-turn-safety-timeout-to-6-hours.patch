@@ -1,6 +1,6 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 4d9b9fe22e493e4ad0e32f6d6c4b81a2d16db4d2 Mon Sep 17 00:00:00 2001
 From: op136 <op136@example.com>
-Date: Mon, 16 Mar 2026 19:40:00 -0300
+Date: Mon, 16 Mar 2026 20:04:16 -0300
 Subject: [PATCH] fix(cron): raise agent turn safety timeout to 6 hours
 
 PERSONAL BUILD: The hardcoded AGENT_TURN_SAFETY_TIMEOUT_MS (1 hour)
@@ -11,24 +11,25 @@ turn spawns subagents or performs long work, it gets killed after 1 hour.
 Raise the safety ceiling to 6 hours (21600s) to match the overlay's
 configured agent timeout default.
 ---
- src/cron/service/timeout-policy.ts | 5 +++--
- 1 file changed, 3 insertions(+), 2 deletions(-)
+ src/cron/service/timeout-policy.ts | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
 
 diff --git a/src/cron/service/timeout-policy.ts b/src/cron/service/timeout-policy.ts
-index 000000000..111111111 100644
+index 7b03b8b..bd36637 100644
 --- a/src/cron/service/timeout-policy.ts
 +++ b/src/cron/service/timeout-policy.ts
-@@ -5,8 +5,9 @@ const DEFAULT_JOB_TIMEOUT_MS = 10 * 6e4;
+@@ -10,8 +10,10 @@ export const DEFAULT_JOB_TIMEOUT_MS = 10 * 60_000; // 10 minutes
  /**
   * Agent turns can legitimately run much longer than generic cron jobs.
   * Use a larger safety ceiling when no explicit timeout is set.
 + * PERSONAL BUILD: raised from 1 hour to 6 hours to prevent premature
 + * termination of cron-spawned agent turns with subagents.
   */
--const AGENT_TURN_SAFETY_TIMEOUT_MS = 60 * 6e4;
-+const AGENT_TURN_SAFETY_TIMEOUT_MS = 360 * 6e4;
+-export const AGENT_TURN_SAFETY_TIMEOUT_MS = 60 * 60_000; // 60 minutes
++export const AGENT_TURN_SAFETY_TIMEOUT_MS = 360 * 60_000; // 6 hours
  
  export function resolveCronJobTimeoutMs(job: CronJob): number | undefined {
    const configuredTimeoutMs =
 -- 
 2.25.1
+
