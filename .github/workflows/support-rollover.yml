@@ -10,6 +10,10 @@ on:
       - 'compatibility.json'
       - '.github/workflows/support-rollover.yml'
 
+concurrency:
+  group: support-rollover
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
@@ -23,34 +27,40 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Resolve latest non-deprecated compatibility entry
         id: latest
+        shell: bash
         run: |
           set -euo pipefail
-          read -r VERSION SHA < <(python3 - <<'PY'
-import json
-with open('compatibility.json','r',encoding='utf-8') as f:
-    data=json.load(f)
-for e in data.get('supported',[]):
-    if e.get('status') == 'deprecated':
-        continue
-    v=e.get('openclawVersion','').strip()
-    s=e.get('commitSha','').strip()
-    if v and s:
-        print(v, s)
-        break
-PY
-)
-          test -n "${VERSION:-}" && test -n "${SHA:-}"
+          SCRIPT='
+          import json, sys
+          with open("compatibility.json", encoding="utf-8") as f:
+              data = json.load(f)
+          for e in data.get("supported", []):
+              if e.get("status") == "deprecated":
+                  continue
+              v = e.get("openclawVersion", "").strip()
+              s = e.get("commitSha", "").strip()
+              if v and s:
+                  print(v, s)
+                  sys.exit(0)
+          sys.exit(1)
+          '
+          read -r VERSION SHA < <(python3 -c "$SCRIPT")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "tag=overlay-v${VERSION}" >> "$GITHUB_OUTPUT"
           echo "branch=support/v${VERSION}" >> "$GITHUB_OUTPUT"
+
       - name: Create/update support branch
         run: |
           set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -B "${{ steps.latest.outputs.branch }}" origin/main
-          git push origin "${{ steps.latest.outputs.branch }}" --force-with-lease
+          git push origin "${{ steps.latest.outputs.branch }}" --force
+
       - name: Ensure release exists
         env:
           GH_TOKEN: ${{ github.token }}
@@ -58,7 +68,26 @@ PY
           set -euo pipefail
           TAG='${{ steps.latest.outputs.tag }}'
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-            echo "release exists"
+            echo "release $TAG already exists"
             exit 0
           fi
-          gh release create "$TAG" --repo "$REPO" --target main --title "$TAG" --notes "Auto support rollover"
+          gh release create "$TAG" --repo "$REPO" --target main \
+            --title "$TAG" --notes "Auto support rollover for ${{ steps.latest.outputs.version }}"
+
+      - name: Prune old support branches
+        run: |
+          set -euo pipefail
+          KEEP="${KEEP_SUPPORT_BRANCHES:-20}"
+          # List remote support/v* branches sorted by version descending
+          BRANCHES=$(git branch -r --list 'origin/support/v*' \
+            | sed 's|origin/||' \
+            | sort -t. -k1,1rn -k2,2rn -k3,3rn)
+          COUNT=0
+          for b in $BRANCHES; do
+            COUNT=$((COUNT + 1))
+            if [ "$COUNT" -gt "$KEEP" ]; then
+              echo "Pruning old branch: $b"
+              git push origin --delete "$b" || true
+            fi
+          done
+          echo "Kept $((COUNT < KEEP ? COUNT : KEEP)) support branches, pruned $((COUNT > KEEP ? COUNT - KEEP : 0))"
