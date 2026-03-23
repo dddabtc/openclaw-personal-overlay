@@ -56,9 +56,23 @@ jobs:
           version="${UPSTREAM_TAG#v}"
           commit_sha="$(npm view "openclaw@${version}" gitHead 2>/dev/null || true)"
           if [ -z "$commit_sha" ]; then
-            echo "Cannot resolve gitHead for openclaw@${version}" >&2
+            echo "gitHead not found in npm metadata for openclaw@${version}, falling back to GitHub API tag resolution" >&2
+            tag_object_sha="$(gh api "repos/openclaw/openclaw/git/refs/tags/${UPSTREAM_TAG}" --jq '.object.sha' 2>/dev/null || true)"
+            if [ -n "$tag_object_sha" ]; then
+              # Check if it's an annotated tag (type=tag) — need to dereference to commit
+              tag_type="$(gh api "repos/openclaw/openclaw/git/refs/tags/${UPSTREAM_TAG}" --jq '.object.type' 2>/dev/null || true)"
+              if [ "$tag_type" = "tag" ]; then
+                commit_sha="$(gh api "repos/openclaw/openclaw/git/tags/${tag_object_sha}" --jq '.object.sha' 2>/dev/null || true)"
+              else
+                commit_sha="$tag_object_sha"
+              fi
+            fi
+          fi
+          if [ -z "$commit_sha" ]; then
+            echo "Cannot resolve commit SHA for openclaw@${version} (tried npm gitHead and GitHub API)" >&2
             exit 1
           fi
+          echo "Resolved commit_sha=${commit_sha}"
 
           COMMIT_SHA="$commit_sha" python3 - <<PY
           import json, os
