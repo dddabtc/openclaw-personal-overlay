@@ -57,12 +57,15 @@ jobs:
           commit_sha="$(npm view "openclaw@${version}" gitHead 2>/dev/null || true)"
           if [ -z "$commit_sha" ]; then
             echo "gitHead not found in npm metadata for openclaw@${version}, falling back to GitHub API tag resolution" >&2
-            tag_object_sha="$(gh api "repos/openclaw/openclaw/git/refs/tags/${UPSTREAM_TAG}" --jq '.object.sha' 2>/dev/null || true)"
-            if [ -n "$tag_object_sha" ]; then
-              # Check if it's an annotated tag (type=tag) — need to dereference to commit
-              tag_type="$(gh api "repos/openclaw/openclaw/git/refs/tags/${UPSTREAM_TAG}" --jq '.object.type' 2>/dev/null || true)"
-              if [ "$tag_type" = "tag" ]; then
-                commit_sha="$(gh api "repos/openclaw/openclaw/git/tags/${tag_object_sha}" --jq '.object.sha' 2>/dev/null || true)"
+            # Use curl (unauthenticated) — GITHUB_TOKEN is scoped to this repo only, not openclaw/openclaw
+            tag_ref_json="$(curl -sf "https://api.github.com/repos/openclaw/openclaw/git/refs/tags/${UPSTREAM_TAG}" 2>/dev/null || true)"
+            if [ -n "$tag_ref_json" ]; then
+              tag_object_sha="$(echo "$tag_ref_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['object']['sha'])" 2>/dev/null || true)"
+              tag_type="$(echo "$tag_ref_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['object']['type'])" 2>/dev/null || true)"
+              if [ "$tag_type" = "tag" ] && [ -n "$tag_object_sha" ]; then
+                # Annotated tag — dereference to get the commit SHA
+                commit_sha="$(curl -sf "https://api.github.com/repos/openclaw/openclaw/git/tags/${tag_object_sha}" 2>/dev/null \
+                  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['object']['sha'])" 2>/dev/null || true)"
               else
                 commit_sha="$tag_object_sha"
               fi
