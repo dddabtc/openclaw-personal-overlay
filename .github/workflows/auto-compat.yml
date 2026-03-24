@@ -82,22 +82,17 @@ jobs:
             echo "Verified exact upstream tag: ${resolved_tag}" >&2
           else
             echo "Exact tag ${base_tag} not found, searching for compatible tags..." >&2
-            # 1) Prefer exact-version suffixed tags (e.g. npm 2026.3.23 -> upstream v2026.3.23-2)
             resolved_tag="$(gh api "repos/${UPSTREAM_REPO}/git/matching-refs/tags/${base_tag}-" \
               --jq '[.[].ref | ltrimstr("refs/tags/") | select(test("-\\d+$"))] | sort | last // empty' 2>/dev/null || true)"
             if [ -z "$resolved_tag" ]; then
               resolved_tag="$(gh api "repos/${UPSTREAM_REPO}/git/matching-refs/tags/${base_tag}-" \
                 --jq '[.[].ref | ltrimstr("refs/tags/")] | sort | last // empty' 2>/dev/null || true)"
             fi
-
-            # 2) Fall back to the stem tag (e.g. npm 2026.3.23-2 -> upstream v2026.3.23)
             if [ -z "$resolved_tag" ] && [ "$stem_tag" != "$base_tag" ]; then
               if gh api "repos/${UPSTREAM_REPO}/git/ref/tags/${stem_tag}" >/dev/null 2>&1; then
                 resolved_tag="$stem_tag"
               fi
             fi
-
-            # 3) Finally, allow suffixed stem tags (e.g. prerelease / alternate packaging)
             if [ -z "$resolved_tag" ] && [ "$stem_tag" != "$base_tag" ]; then
               resolved_tag="$(gh api "repos/${UPSTREAM_REPO}/git/matching-refs/tags/${stem_tag}-" \
                 --jq '[.[].ref | ltrimstr("refs/tags/") | select(test("-\\d+$"))] | sort | last // empty' 2>/dev/null || true)"
@@ -114,7 +109,6 @@ jobs:
             echo "Verified compatible upstream tag: ${resolved_tag}" >&2
           fi
 
-          # Keep downstream naming/compat logic anchored to the npm version.
           echo "latest_tag=${base_tag}" >> "$GITHUB_OUTPUT"
           echo "resolved_upstream_tag=${resolved_tag}" >> "$GITHUB_OUTPUT"
 
@@ -146,8 +140,12 @@ jobs:
           HAS_RESIDUE: ${{ steps.failstate.outputs.has_residue }}
           NEEDS_UPDATE: ${{ steps.compare.outputs.needs_update }}
         run: |
+          # Only run full-flow/release when we are already compatible.
+          # If upstream bumped beyond compatibility.json, hand off to autofix first.
           run_full=false
-          if [ "$FORCE" = "true" ] || { [ "$NEEDS_UPDATE" = "false" ] && [ "$HAS_RESIDUE" = "false" ]; }; then
+          if [ "$FORCE" = "true" ]; then
+            run_full=true
+          elif [ "$NEEDS_UPDATE" = "false" ] && [ "$HAS_RESIDUE" = "false" ]; then
             run_full=true
           fi
           echo "run_full=$run_full" >> "$GITHUB_OUTPUT"
@@ -175,7 +173,7 @@ jobs:
 
   full-flow:
     needs: detect
-    if: needs.detect.outputs.run_full == 'true'
+    if: needs.detect.outputs.run_full == 'true' && needs.detect.outputs.needs_update == 'false'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -186,7 +184,7 @@ jobs:
 
   release:
     needs: [detect, full-flow]
-    if: needs.detect.outputs.run_full == 'true' && needs.full-flow.result == 'success' && github.ref_name == 'main'
+    if: needs.detect.outputs.run_full == 'true' && needs.detect.outputs.needs_update == 'false' && needs.full-flow.result == 'success' && github.ref_name == 'main'
     uses: ./.github/workflows/release.yml
     with:
       release_tag: ${{ needs.detect.outputs.release_tag }}
@@ -196,7 +194,7 @@ jobs:
 
   clear-residue-on-success:
     needs: [detect, full-flow]
-    if: needs.detect.outputs.run_full == 'true' && success()
+    if: needs.detect.outputs.run_full == 'true' && needs.detect.outputs.needs_update == 'false' && success()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/github-script@v7
@@ -212,7 +210,7 @@ jobs:
 
   mark-failure-and-trigger-autofix:
     needs: [detect, full-flow]
-    if: needs.detect.outputs.run_full == 'true' && needs.full-flow.result == 'failure'
+    if: needs.detect.outputs.run_full == 'true' && needs.detect.outputs.needs_update == 'false' && needs.full-flow.result == 'failure'
     runs-on: ubuntu-latest
     steps:
       - name: Persist failure residue
