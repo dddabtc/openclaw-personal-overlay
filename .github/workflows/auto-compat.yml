@@ -69,32 +69,54 @@ jobs:
           fi
 
           base_tag="v${npm_latest}"
+          stem_version="$(printf '%s' "$npm_latest" | sed -E 's/-[A-Za-z0-9.]+$//')"
+          stem_tag="v${stem_version}"
 
           # Verify upstream has a matching release tag.
-          # Some releases use suffixed tags (e.g. v2026.3.13-1) instead of
-          # an exact v{version} tag, so fall back to matching-refs lookup.
+          # Handle both directions of suffix skew between npm and git tags:
+          # - npm=2026.3.23, upstream=v2026.3.23-2
+          # - npm=2026.3.23-2, upstream=v2026.3.23
+          resolved_tag=""
           if gh api "repos/${UPSTREAM_REPO}/git/ref/tags/${base_tag}" >/dev/null 2>&1; then
-            echo "Verified exact upstream tag: ${base_tag}" >&2
+            resolved_tag="$base_tag"
+            echo "Verified exact upstream tag: ${resolved_tag}" >&2
           else
-            echo "Exact tag ${base_tag} not found, searching for suffixed tags..." >&2
-            # Prefer numeric-suffixed tags (e.g. -1, -2) over prerelease (-beta.*)
-            match="$(gh api "repos/${UPSTREAM_REPO}/git/matching-refs/tags/${base_tag}-" \
-                       --jq '[.[].ref | ltrimstr("refs/tags/") | select(test("-\\d+$"))] | sort | last // empty')"
-            # Fall back to any match (including beta) if no numeric suffix found
-            if [ -z "$match" ]; then
-              match="$(gh api "repos/${UPSTREAM_REPO}/git/matching-refs/tags/${base_tag}-" \
-                         --jq '[.[].ref | ltrimstr("refs/tags/")] | sort | last // empty')"
+            echo "Exact tag ${base_tag} not found, searching for compatible tags..." >&2
+            # 1) Prefer exact-version suffixed tags (e.g. npm 2026.3.23 -> upstream v2026.3.23-2)
+            resolved_tag="$(gh api "repos/${UPSTREAM_REPO}/git/matching-refs/tags/${base_tag}-" \
+              --jq '[.[].ref | ltrimstr("refs/tags/") | select(test("-\\d+$"))] | sort | last // empty' 2>/dev/null || true)"
+            if [ -z "$resolved_tag" ]; then
+              resolved_tag="$(gh api "repos/${UPSTREAM_REPO}/git/matching-refs/tags/${base_tag}-" \
+                --jq '[.[].ref | ltrimstr("refs/tags/")] | sort | last // empty' 2>/dev/null || true)"
             fi
-            if [ -z "$match" ]; then
-              echo "No upstream tag found matching ${base_tag} or ${base_tag}-*" >&2
+
+            # 2) Fall back to the stem tag (e.g. npm 2026.3.23-2 -> upstream v2026.3.23)
+            if [ -z "$resolved_tag" ] && [ "$stem_tag" != "$base_tag" ]; then
+              if gh api "repos/${UPSTREAM_REPO}/git/ref/tags/${stem_tag}" >/dev/null 2>&1; then
+                resolved_tag="$stem_tag"
+              fi
+            fi
+
+            # 3) Finally, allow suffixed stem tags (e.g. prerelease / alternate packaging)
+            if [ -z "$resolved_tag" ] && [ "$stem_tag" != "$base_tag" ]; then
+              resolved_tag="$(gh api "repos/${UPSTREAM_REPO}/git/matching-refs/tags/${stem_tag}-" \
+                --jq '[.[].ref | ltrimstr("refs/tags/") | select(test("-\\d+$"))] | sort | last // empty' 2>/dev/null || true)"
+              if [ -z "$resolved_tag" ]; then
+                resolved_tag="$(gh api "repos/${UPSTREAM_REPO}/git/matching-refs/tags/${stem_tag}-" \
+                  --jq '[.[].ref | ltrimstr("refs/tags/")] | sort | last // empty' 2>/dev/null || true)"
+              fi
+            fi
+
+            if [ -z "$resolved_tag" ]; then
+              echo "No upstream tag found matching ${base_tag}, ${base_tag}-*, ${stem_tag}, or ${stem_tag}-*" >&2
               exit 1
             fi
-            echo "Verified suffixed upstream tag: ${match}" >&2
+            echo "Verified compatible upstream tag: ${resolved_tag}" >&2
           fi
 
-          # Always output the clean npm-based tag so downstream steps
-          # (compatibility compare, release naming) stay consistent.
+          # Keep downstream naming/compat logic anchored to the npm version.
           echo "latest_tag=${base_tag}" >> "$GITHUB_OUTPUT"
+          echo "resolved_upstream_tag=${resolved_tag}" >> "$GITHUB_OUTPUT"
 
       - name: Compare compatibility support vs upstream
         id: compare
