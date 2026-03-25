@@ -1,0 +1,2 @@
+*.sh text eol=lf
+bin/openclaw-personal text eol=lf
