@@ -1,6 +1,6 @@
-From 113c40b6fd30f1c0a5fbf783ca6e7842447c02a8 Mon Sep 17 00:00:00 2001
-From: dda <dda@ddadeMac-mini.local>
-Date: Mon, 23 Mar 2026 10:14:32 -0300
+From 73020fe623c63c25e7d8977d04e3001db6f45ba1 Mon Sep 17 00:00:00 2001
+From: test <test@example.com>
+Date: Sun, 29 Mar 2026 04:44:56 -0300
 Subject: [PATCH] fix(reply): make transient retry delay abortable
 
 ---
@@ -8,17 +8,17 @@ Subject: [PATCH] fix(reply): make transient retry delay abortable
  1 file changed, 9 insertions(+), 4 deletions(-)
 
 diff --git a/src/auto-reply/reply/agent-runner-execution.ts b/src/auto-reply/reply/agent-runner-execution.ts
-index f164559a79..3ee75a039e 100644
+index 07dbc76e4..c2fc7c4f6 100644
 --- a/src/auto-reply/reply/agent-runner-execution.ts
 +++ b/src/auto-reply/reply/agent-runner-execution.ts
 @@ -1,5 +1,6 @@
  import crypto from "node:crypto";
  import fs from "node:fs";
 +import { setTimeout as delay } from "node:timers/promises";
- import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
- import { resolveBootstrapWarningSignaturesSeen } from "../../agents/bootstrap-budget.js";
- import { runCliAgent } from "../../agents/cli-runner.js";
-@@ -643,10 +644,14 @@ export async function runAgentTurnWithFallback(params: {
+ import {
+   hasOutboundReplyContent,
+   resolveSendableOutboundReplyParts,
+@@ -703,10 +704,14 @@ export async function runAgentTurnWithFallback(params: {
          defaultRuntime.error(
            `Transient HTTP provider error before reply (${message}). Retrying once in ${TRANSIENT_HTTP_RETRY_DELAY_MS}ms.`,
          );
@@ -38,5 +38,5 @@ index f164559a79..3ee75a039e 100644
  
        defaultRuntime.error(`Embedded agent failed before reply: ${message}`);
 -- 
-2.50.1 (Apple Git-155)
+2.25.1
 
