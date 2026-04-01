@@ -6,6 +6,8 @@
 [![Release](https://img.shields.io/github/v/release/dddabtc/openclaw-personal-overlay)](https://github.com/dddabtc/openclaw-personal-overlay/releases)
 
 > 中文文档：**[README.zh-CN.md](./README.zh-CN.md)**
+>
+> Upstream OpenClaw: **[github.com/openclaw/openclaw](https://github.com/openclaw/openclaw)** · Docs: **[docs.openclaw.ai](https://docs.openclaw.ai)**
 
 ## Why
 
