@@ -1,17 +1,116 @@
-From 10b6ed7b18b711582ec0c33b6ac2c9e79f40e322 Mon Sep 17 00:00:00 2001
-From: dda <dddabtc@users.noreply.github.com>
-Date: Tue, 31 Mar 2026 22:27:43 -0300
-Subject: [PATCH] feat(exec): add output cap for main session policy
+From 12ea0d9801c5c76274bd35aa8385268678c9ce99 Mon Sep 17 00:00:00 2001
+From: bot <bot@bot>
+Date: Mon, 9 Mar 2026 12:00:09 -0300
+Subject: [PATCH 4/4] feat(exec): add output cap for main session policy
 
 ---
- src/config/types.tools.ts | 16 ++++++++++++++++
- 1 file changed, 16 insertions(+)
+ src/agents/bash-tools.exec-types.ts    |  2 ++
+ src/agents/bash-tools.exec.ts          | 16 ++++++++++++++--
+ src/agents/pi-tools.ts                 |  4 ++++
+ src/auto-reply/status.ts               |  7 +++++++
+ src/config/types.tools.ts              | 16 ++++++++++++++++
+ src/config/zod-schema.agent-runtime.ts | 14 ++++++++++++++
+ 6 files changed, 57 insertions(+), 2 deletions(-)
 
+diff --git a/src/agents/bash-tools.exec-types.ts b/src/agents/bash-tools.exec-types.ts
+index 68c3102777..71575da7c8 100644
+--- a/src/agents/bash-tools.exec-types.ts
++++ b/src/agents/bash-tools.exec-types.ts
+@@ -15,6 +15,8 @@ export type ExecMainSessionPolicy = {
+   maxExecTimeoutSec?: number;
+   /** Block SSH-related commands (ssh, scp, sftp, rsync over ssh). */
+   blockSshCommands?: boolean;
++  /** Maximum output bytes for main session (default: 50KB = 51200). */
++  maxOutputBytes?: number;
+ };
+ 
+ export type ExecToolDefaults = {
+diff --git a/src/agents/bash-tools.exec.ts b/src/agents/bash-tools.exec.ts
+index dd3e724b2e..765d2b8e7c 100644
+--- a/src/agents/bash-tools.exec.ts
++++ b/src/agents/bash-tools.exec.ts
+@@ -361,8 +361,20 @@ export function createExecTool(
+         yieldMs: params.yieldMs,
+       });
+ 
+-      const maxOutput = DEFAULT_MAX_OUTPUT;
+-      const pendingMaxOutput = DEFAULT_PENDING_MAX_OUTPUT;
++      // PERSONAL BUILD: Apply output cap from main session policy
++      const policyMaxOutput = defaults?.mainSessionPolicy?.maxOutputBytes;
++      const mainSessionOutputCap =
++        isMainAgentSession(defaults?.sessionKey) &&
++        typeof policyMaxOutput === "number" &&
++        policyMaxOutput > 0
++          ? policyMaxOutput
++          : undefined;
++      const maxOutput = mainSessionOutputCap
++        ? Math.min(DEFAULT_MAX_OUTPUT, mainSessionOutputCap)
++        : DEFAULT_MAX_OUTPUT;
++      const pendingMaxOutput = mainSessionOutputCap
++        ? Math.min(DEFAULT_PENDING_MAX_OUTPUT, mainSessionOutputCap)
++        : DEFAULT_PENDING_MAX_OUTPUT;
+       const warnings: string[] = [];
+       let execCommandOverride: string | undefined;
+       const backgroundRequested = params.background === true;
+diff --git a/src/agents/pi-tools.ts b/src/agents/pi-tools.ts
+index 3f7b8f5546..a638a16d61 100644
+--- a/src/agents/pi-tools.ts
++++ b/src/agents/pi-tools.ts
+@@ -158,6 +158,8 @@ function resolveExecConfig(params: { cfg?: OpenClawConfig; agentId?: string }) {
+     notifyOnExitEmptySuccess:
+       agentExec?.notifyOnExitEmptySuccess ?? globalExec?.notifyOnExitEmptySuccess,
+     applyPatch: agentExec?.applyPatch ?? globalExec?.applyPatch,
++    // PERSONAL BUILD: Main session execution policy
++    mainSessionPolicy: agentExec?.mainSessionPolicy ?? globalExec?.mainSessionPolicy,
+   };
+ }
+ 
+@@ -450,6 +452,8 @@ export function createOpenClawCodingTools(options?: {
+           finalizeExec: sandbox.backend?.finalizeExec?.bind(sandbox.backend),
+         }
+       : undefined,
++    // PERSONAL BUILD: Main session execution policy
++    mainSessionPolicy: options?.exec?.mainSessionPolicy ?? execConfig.mainSessionPolicy,
+   });
+   const processTool = createProcessTool({
+     cleanupMs: cleanupMsOverride ?? execConfig.cleanupMs,
+diff --git a/src/auto-reply/status.ts b/src/auto-reply/status.ts
+index 5bf56da4a8..564974dd3d 100644
+--- a/src/auto-reply/status.ts
++++ b/src/auto-reply/status.ts
+@@ -1,6 +1,10 @@
+ import fs from "node:fs";
+ import { resolveContextTokensForModel } from "../agents/context.js";
+ import { DEFAULT_CONTEXT_TOKENS, DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
++
++// PERSONAL BUILD metadata injected at build time
++const PERSONAL_BUILD_DATE = "__PERSONAL_BUILD_DATE__";
++const PERSONAL_BUILD_REPO = "https://github.com/dddabtc";
+ import { resolveModelAuthMode } from "../agents/model-auth.js";
+ import {
+   buildModelAliasIndex,
+@@ -774,6 +778,8 @@ export function buildStatusMessage(args: StatusArgs): string {
+     : null;
+   const commit = resolveCommitHash({ moduleUrl: import.meta.url });
+   const versionLine = `🦞 OpenClaw ${VERSION}${commit ? ` (${commit})` : ""}`;
++  // PERSONAL BUILD: Add build tag line
++  const personalBuildLine = `🏷 PERSONAL BUILD · ${PERSONAL_BUILD_DATE}(UTC)\n${PERSONAL_BUILD_REPO}`;
+   const usagePair = formatUsagePair(inputTokens, outputTokens);
+   const cacheLine = formatCacheLine(inputTokens, cacheRead, cacheWrite);
+   const costLine = costLabel ? `💵 Cost: ${costLabel}` : null;
+@@ -784,6 +790,7 @@ export function buildStatusMessage(args: StatusArgs): string {
+ 
+   return [
+     versionLine,
++    personalBuildLine,
+     args.timeLine,
+     modelLine,
+     fallbackLine,
 diff --git a/src/config/types.tools.ts b/src/config/types.tools.ts
-index f51cc5fc20..0863b5bced 100644
+index fb95c3ac64..29b8258804 100644
 --- a/src/config/types.tools.ts
 +++ b/src/config/types.tools.ts
-@@ -278,6 +278,22 @@ export type ExecToolConfig = {
+@@ -277,6 +277,22 @@ export type ExecToolConfig = {
       */
      allowModels?: string[];
    };
@@ -34,6 +133,38 @@ index f51cc5fc20..0863b5bced 100644
  };
  
  export type FsToolsConfig = {
+diff --git a/src/config/zod-schema.agent-runtime.ts b/src/config/zod-schema.agent-runtime.ts
+index 722c5ec9ba..9666ca3873 100644
+--- a/src/config/zod-schema.agent-runtime.ts
++++ b/src/config/zod-schema.agent-runtime.ts
+@@ -416,6 +416,18 @@ const ToolExecSafeBinProfileSchema = z
+   })
+   .strict();
+ 
++// PERSONAL BUILD: Main session execution policy schema
++const MainSessionPolicySchema = z
++  .object({
++    forbidLongExec: z.boolean().optional(),
++    requireBackgroundForExec: z.boolean().optional(),
++    maxExecTimeoutSec: z.number().int().positive().optional(),
++    blockSshCommands: z.boolean().optional(),
++    maxOutputBytes: z.number().int().positive().optional(),
++  })
++  .strict()
++  .optional();
++
+ const ToolExecBaseShape = {
+   host: z.enum(["sandbox", "gateway", "node"]).optional(),
+   security: z.enum(["deny", "allowlist", "full"]).optional(),
+@@ -432,6 +444,8 @@ const ToolExecBaseShape = {
+   notifyOnExit: z.boolean().optional(),
+   notifyOnExitEmptySuccess: z.boolean().optional(),
+   applyPatch: ToolExecApplyPatchSchema,
++  // PERSONAL BUILD: Main session execution policy
++  mainSessionPolicy: MainSessionPolicySchema,
+ } as const;
+ 
+ const AgentToolExecSchema = z
 -- 
-2.25.1
+2.50.1 (Apple Git-155)
 
