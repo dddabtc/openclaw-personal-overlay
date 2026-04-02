@@ -1,7 +1,7 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From cd80e25b025d7fd6f732235a0fbf7254588d4d1d Mon Sep 17 00:00:00 2001
 From: subagent-bot <subagent-bot@example.com>
 Date: Wed, 1 Apr 2026 22:40:00 -0300
-Subject: [PATCH 11/11] fix(status): restore chat PERSONAL BUILD tag
+Subject: [PATCH 9/9] fix(status): restore chat PERSONAL BUILD tag
 
 PERSONAL BUILD: Restore the chat /status PERSONAL BUILD banner in
 src/auto-reply/status.ts for the v2026.4.1 patch queue without reintroducing
@@ -11,7 +11,7 @@ older unrelated hunks from the historical 0004 patch.
  1 file changed, 7 insertions(+)
 
 diff --git a/src/auto-reply/status.ts b/src/auto-reply/status.ts
-index a08931b1c..b83185d22 100644
+index a66c6e887a..4415f4deca 100644
 --- a/src/auto-reply/status.ts
 +++ b/src/auto-reply/status.ts
 @@ -1,6 +1,10 @@
@@ -25,17 +25,16 @@ index a08931b1c..b83185d22 100644
  import { resolveModelAuthMode } from "../agents/model-auth.js";
  import {
    buildModelAliasIndex,
-@@ -657,6 +661,8 @@ export function buildStatusMessage(args: StatusArgs): string {
+@@ -803,6 +807,8 @@ export function buildStatusMessage(args: StatusArgs): string {
      : null;
-   const commit = resolveCommitHash();
+   const commit = resolveCommitHash({ moduleUrl: import.meta.url });
    const versionLine = `🦞 OpenClaw ${VERSION}${commit ? ` (${commit})` : ""}`;
 +  // PERSONAL BUILD: Add build tag line
-+  const personalBuildLine = `🏷 PERSONAL BUILD · ${PERSONAL_BUILD_DATE}(UTC)
-${PERSONAL_BUILD_REPO}`;
++  const personalBuildLine = `🏷 PERSONAL BUILD · ${PERSONAL_BUILD_DATE}(UTC)\n${PERSONAL_BUILD_REPO}`;
    const usagePair = formatUsagePair(inputTokens, outputTokens);
    const cacheLine = formatCacheLine(inputTokens, cacheRead, cacheWrite);
    const costLine = costLabel ? `💵 Cost: ${costLabel}` : null;
-@@ -667,6 +673,7 @@ export function buildStatusMessage(args: StatusArgs): string {
+@@ -813,6 +819,7 @@ export function buildStatusMessage(args: StatusArgs): string {
  
    return [
      versionLine,
@@ -45,3 +44,4 @@ ${PERSONAL_BUILD_REPO}`;
      fallbackLine,
 -- 
 2.25.1
+
