@@ -7,10 +7,9 @@ Subject: [PATCH 4/4] feat(exec): add output cap for main session policy
  src/agents/bash-tools.exec-types.ts    |  2 ++
  src/agents/bash-tools.exec.ts          | 16 ++++++++++++++--
  src/agents/pi-tools.ts                 |  4 ++++
- src/auto-reply/status.ts               |  7 +++++++
  src/config/types.tools.ts              | 16 ++++++++++++++++
  src/config/zod-schema.agent-runtime.ts | 14 ++++++++++++++
- 6 files changed, 57 insertions(+), 2 deletions(-)
+ 5 files changed, 50 insertions(+), 2 deletions(-)
 
 diff --git a/src/agents/bash-tools.exec-types.ts b/src/agents/bash-tools.exec-types.ts
 index 68c3102777..71575da7c8 100644
@@ -74,38 +73,6 @@ index 3f7b8f5546..a638a16d61 100644
    });
    const processTool = createProcessTool({
      cleanupMs: cleanupMsOverride ?? execConfig.cleanupMs,
-diff --git a/src/auto-reply/status.ts b/src/auto-reply/status.ts
-index 5bf56da4a8..564974dd3d 100644
---- a/src/auto-reply/status.ts
-+++ b/src/auto-reply/status.ts
-@@ -1,6 +1,10 @@
- import fs from "node:fs";
- import { resolveContextTokensForModel } from "../agents/context.js";
- import { DEFAULT_CONTEXT_TOKENS, DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
-+
-+// PERSONAL BUILD metadata injected at build time
-+const PERSONAL_BUILD_DATE = "__PERSONAL_BUILD_DATE__";
-+const PERSONAL_BUILD_REPO = "https://github.com/dddabtc";
- import { resolveModelAuthMode } from "../agents/model-auth.js";
- import {
-   buildModelAliasIndex,
-@@ -774,6 +778,8 @@ export function buildStatusMessage(args: StatusArgs): string {
-     : null;
-   const commit = resolveCommitHash({ moduleUrl: import.meta.url });
-   const versionLine = `🦞 OpenClaw ${VERSION}${commit ? ` (${commit})` : ""}`;
-+  // PERSONAL BUILD: Add build tag line
-+  const personalBuildLine = `🏷 PERSONAL BUILD · ${PERSONAL_BUILD_DATE}(UTC)\n${PERSONAL_BUILD_REPO}`;
-   const usagePair = formatUsagePair(inputTokens, outputTokens);
-   const cacheLine = formatCacheLine(inputTokens, cacheRead, cacheWrite);
-   const costLine = costLabel ? `💵 Cost: ${costLabel}` : null;
-@@ -784,6 +790,7 @@ export function buildStatusMessage(args: StatusArgs): string {
- 
-   return [
-     versionLine,
-+    personalBuildLine,
-     args.timeLine,
-     modelLine,
-     fallbackLine,
 diff --git a/src/config/types.tools.ts b/src/config/types.tools.ts
 index fb95c3ac64..29b8258804 100644
 --- a/src/config/types.tools.ts
