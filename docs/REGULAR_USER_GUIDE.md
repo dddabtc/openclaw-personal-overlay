@@ -33,6 +33,14 @@ bin/openclaw-personal rollback
 
 Rollback restores last baseline backup captured during apply.
 
+## Windows-native OpenClaw
+
+Patch-only Windows-native helpers are documented here:
+- [windows-native.md](windows-native.md)
+- [windows-payload-example/](windows-payload-example/)
+
+These helpers do not modify runtime gateway config; they only apply/rollback overlay payload files.
+
 ## Troubleshooting
 
 - **"openclaw npm installation not found"**

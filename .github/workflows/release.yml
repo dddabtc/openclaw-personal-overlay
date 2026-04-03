@@ -160,6 +160,21 @@ jobs:
               gh.write(f"patch_set_dir={target['patchSetDir']}\n")
           PY
 
+      - name: Preflight patch-apply check
+        env:
+          TARGET_COMMIT: ${{ steps.compat.outputs.target_commit }}
+          PATCH_SET_DIR: ${{ steps.compat.outputs.patch_set_dir }}
+        run: |
+          set -euo pipefail
+          workdir="$(mktemp -d)"
+          trap 'rm -rf "$workdir"' EXIT
+
+          git clone --quiet https://github.com/openclaw/openclaw.git "$workdir/upstream"
+          cd "$workdir/upstream"
+          git checkout --quiet "$TARGET_COMMIT"
+          git am /home/runner/work/openclaw-personal-overlay/openclaw-personal-overlay/${PATCH_SET_DIR}/*.patch
+          echo "Patch preflight passed for ${TARGET_COMMIT} using ${PATCH_SET_DIR}"
+
       - name: Update CHANGELOG
         env:
           RELEASE_TAG: ${{ steps.normalize.outputs.release_tag }}
