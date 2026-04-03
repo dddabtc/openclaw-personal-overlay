@@ -9,5 +9,5 @@ if not exist "%PS_SCRIPT%" (
   exit /b 2
 )
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "%PS_SCRIPT%" %*
+pwsh -NoProfile -ExecutionPolicy Bypass -File "%PS_SCRIPT%" %*
 exit /b %ERRORLEVEL%
