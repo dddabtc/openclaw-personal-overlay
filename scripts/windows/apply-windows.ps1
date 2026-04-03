@@ -3,18 +3,19 @@ param(
     [ValidateSet('windows-native')]
     [string]$Target = 'windows-native',
     [Parameter(Mandatory = $true)]
-    [int]$GatewayPort,
+    [string]$PayloadPath,
     [switch]$RestartGateway
 )
 
 $helpText = @"
-Apply Windows-native OpenClaw overlay settings.
+Apply Windows-native OpenClaw overlay files.
 
 This script supports Windows-native OpenClaw only.
 It does not apply to WSL installs.
+It does not modify runtime config such as gateway ports.
 
 Example:
-  powershell -File .\scripts\windows\apply-windows.ps1 -Target windows-native -GatewayPort 18788 -RestartGateway
+  powershell -File .\scripts\windows\apply-windows.ps1 -Target windows-native -PayloadPath .\dist-overlay\payload
 "@
 
 if ($args -contains '-h' -or $args -contains '--help' -or $args -contains '/?') {
@@ -25,46 +26,68 @@ if ($args -contains '-h' -or $args -contains '--help' -or $args -contains '/?') 
 . "$PSScriptRoot/lib/common.ps1"
 
 $resolvedTarget = Assert-TargetWindowsNative -Target $Target
-if ($GatewayPort -lt 1 -or $GatewayPort -gt 65535) {
-    Fail 'GatewayPort must be between 1 and 65535.'
-}
-
 Assert-CommandAvailable node
 Assert-CommandAvailable npm
 Assert-CommandAvailable git
 
 $paths = Get-OpenClawPaths
-$currentPort = Get-GatewayPort -ConfigPath $paths.ConfigPath
+$resolvedPayload = Resolve-Path -Path $PayloadPath -ErrorAction Stop
+
 Write-Info "Target: $resolvedTarget"
 Write-Info "State dir: $($paths.StateDir)"
 Write-Info "Install root: $($paths.InstallRoot)"
-Write-Info "Config: $($paths.ConfigPath)"
-Write-Info "Gateway script: $($paths.GatewayCmdPath)"
-Write-Info "Current gateway port: $currentPort"
-Write-Info "Requested gateway port: $GatewayPort"
+Write-Info "Payload path: $resolvedPayload"
 
-$owner = Get-TcpPortOwnerSummary -Port $GatewayPort
-if ($owner -and $GatewayPort -ne $currentPort) {
-    Fail "Port $GatewayPort is already in use by PID $($owner.ProcessId) ($($owner.ProcessName), state=$($owner.State)). Refusing to continue."
-}
-
-$backupDir = New-BackupSet -ConfigPath $paths.ConfigPath -GatewayCmdPath $paths.GatewayCmdPath -BackupRoot $paths.BackupRoot -Metadata @{
-    action = 'apply'
-    target = $resolvedTarget
-    previousPort = $currentPort
-    requestedPort = $GatewayPort
-    createdAt = (Get-Date).ToString('o')
-}
+$backupDir = New-OverlayBackupDir -BackupRoot $paths.OverlayBackupRoot
 Write-Info "Backup created: $backupDir"
 
-Set-GatewayPort -ConfigPath $paths.ConfigPath -GatewayCmdPath $paths.GatewayCmdPath -Port $GatewayPort
-Write-Info 'Updated openclaw.json and gateway.cmd'
+$payloadRoot = $resolvedPayload.Path
+$installPayload = Join-Path $payloadRoot 'dist-overlay'
+if (Test-Path $installPayload) {
+    $payloadRoot = $installPayload
+}
+
+$manifestPath = Join-Path $payloadRoot 'manifest.json'
+if (-not (Test-Path $manifestPath)) {
+    Fail "Missing manifest.json in payload path: $payloadRoot"
+}
+
+$manifest = Read-JsonFile -Path $manifestPath
+$files = @($manifest.files)
+if (-not $files -or $files.Count -eq 0) {
+    Fail "No files listed in payload manifest: $manifestPath"
+}
+
+foreach ($entry in $files) {
+    $relativePath = [string]$entry.path
+    $targetType = [string]$entry.target
+    if (-not $relativePath) {
+        Fail 'Manifest entry missing path'
+    }
+
+    switch ($targetType) {
+        'installRoot' { $base = $paths.InstallRoot }
+        'stateDir' { $base = $paths.StateDir }
+        default { Fail "Unsupported manifest target '$targetType' for $relativePath" }
+    }
+
+    $sourcePath = Join-Path $payloadRoot $relativePath
+    $targetPath = Join-Path $base $relativePath
+    $backupPath = Join-Path $backupDir $targetType
+    $backupTargetPath = Join-Path $backupPath $relativePath
+
+    if (Test-Path $targetPath) {
+        Copy-PathSafely -Source $targetPath -Destination $backupTargetPath
+    }
+
+    Copy-PathSafely -Source $sourcePath -Destination $targetPath
+    Write-Info "Applied: $targetType/$relativePath"
+}
 
 if ($RestartGateway) {
-    Restart-OpenClawGateway -StateDir $paths.StateDir
-    Write-Info 'Gateway restarted'
+    Write-Info 'Restart requested, but this patch-only helper does not modify or manage gateway runtime directly. Restart manually if needed.'
 } else {
-    Write-Info 'Restart skipped (use -RestartGateway to restart now)'
+    Write-Info 'Restart skipped'
 }
 
 Write-Info 'Apply complete'

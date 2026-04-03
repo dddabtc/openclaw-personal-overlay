@@ -30,26 +30,8 @@ function Assert-CommandAvailable {
     }
 }
 
-function Get-TcpPortOwnerSummary {
-    param([int]$Port)
-    $conn = Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $conn) {
-        return $null
-    }
-
-    $pid = $conn.OwningProcess
-    $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
-    [pscustomobject]@{
-        Port = $Port
-        ProcessId = $pid
-        ProcessName = if ($proc) { $proc.ProcessName } else { 'unknown' }
-        State = $conn.State
-    }
-}
-
 function Get-OpenClawPaths {
     $stateDir = if ($env:OPENCLAW_STATE_DIR) { $env:OPENCLAW_STATE_DIR } else { Join-Path $HOME '.openclaw' }
-    $configPath = if ($env:OPENCLAW_CONFIG_PATH) { $env:OPENCLAW_CONFIG_PATH } else { Join-Path $stateDir 'openclaw.json' }
 
     $npmPrefix = (& npm prefix -g 2>$null)
     $candidates = @()
@@ -78,20 +60,10 @@ function Get-OpenClawPaths {
         Fail 'Could not locate Windows-native OpenClaw install root. Set OPENCLAW_INSTALL_ROOT or ensure global npm install is present.'
     }
 
-    $gatewayCmdPath = Join-Path $stateDir 'gateway.cmd'
-    if (-not (Test-Path $configPath)) {
-        Fail "OpenClaw config not found: $configPath"
-    }
-    if (-not (Test-Path $gatewayCmdPath)) {
-        Fail "Windows-native gateway.cmd not found: $gatewayCmdPath"
-    }
-
     return [pscustomobject]@{
         StateDir = $stateDir
-        ConfigPath = $configPath
-        GatewayCmdPath = $gatewayCmdPath
         InstallRoot = $installRoot
-        BackupRoot = Join-Path $stateDir 'overlay-windows-backups'
+        OverlayBackupRoot = Join-Path $stateDir 'overlay-windows-backups'
     }
 }
 
@@ -109,23 +81,12 @@ function Write-JsonFile {
     Set-Content -Path $Path -Value ($json + "`r`n") -Encoding UTF8
 }
 
-function New-BackupSet {
-    param(
-        [string]$ConfigPath,
-        [string]$GatewayCmdPath,
-        [string]$BackupRoot,
-        [hashtable]$Metadata
-    )
+function New-OverlayBackupDir {
+    param([string]$BackupRoot)
     New-Item -ItemType Directory -Force -Path $BackupRoot | Out-Null
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $backupDir = Join-Path $BackupRoot $stamp
     New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
-
-    Copy-Item -LiteralPath $ConfigPath -Destination (Join-Path $backupDir 'openclaw.json') -Force
-    Copy-Item -LiteralPath $GatewayCmdPath -Destination (Join-Path $backupDir 'gateway.cmd') -Force
-
-    $metaPath = Join-Path $backupDir 'backup-metadata.json'
-    Write-JsonFile -Path $metaPath -Object $Metadata
     return $backupDir
 }
 
@@ -139,54 +100,22 @@ function Get-LatestBackupDir {
     return $null
 }
 
-function Get-GatewayPort {
-    param([string]$ConfigPath)
-    $cfg = Read-JsonFile -Path $ConfigPath
-    if ($cfg.gateway -and $cfg.gateway.port) {
-        return [int]$cfg.gateway.port
-    }
-    return 18789
-}
-
-function Set-GatewayPort {
+function Copy-PathSafely {
     param(
-        [string]$ConfigPath,
-        [string]$GatewayCmdPath,
-        [int]$Port
+        [string]$Source,
+        [string]$Destination
     )
-    $cfg = Read-JsonFile -Path $ConfigPath
-    if (-not $cfg.gateway) {
-        $cfg | Add-Member -NotePropertyName gateway -NotePropertyValue ([pscustomobject]@{})
-    }
-    $cfg.gateway.port = $Port
-    Write-JsonFile -Path $ConfigPath -Object $cfg
-
-    $gatewayContent = Get-Content -Raw -Path $GatewayCmdPath
-    $updated = [regex]::Replace($gatewayContent, '(?m)(set\s+"OPENCLAW_GATEWAY_PORT=)\d+("?)', "`${1}$Port`${2}", 1)
-    if ($updated -eq $gatewayContent) {
-        $updated = [regex]::Replace($gatewayContent, '(?m)(openclaw\s+gateway\s+--port\s+)\d+', "`${1}$Port", 1)
-    }
-    if ($updated -eq $gatewayContent) {
-        Fail "Did not find gateway port assignment in $GatewayCmdPath"
-    }
-    Set-Content -Path $GatewayCmdPath -Value $updated -Encoding ASCII
-}
-
-function Restart-OpenClawGateway {
-    param([string]$StateDir)
-    $script = Join-Path $StateDir 'gateway.cmd'
-    if (-not (Test-Path $script)) {
-        Fail "Cannot restart; missing gateway script: $script"
+    if (-not (Test-Path $Source)) {
+        Fail "Source path does not exist: $Source"
     }
 
-    $running = Get-CimInstance Win32_Process -Filter "name = 'cmd.exe'" |
-        Where-Object { $_.CommandLine -and $_.CommandLine -match [regex]::Escape($script) }
-
-    foreach ($proc in $running) {
-        Write-Info "Stopping existing gateway wrapper PID $($proc.ProcessId)"
-        Stop-Process -Id $proc.ProcessId -Force
+    if (Test-Path $Source -PathType Container) {
+        Copy-Item -LiteralPath $Source -Destination $Destination -Recurse -Force
+    } else {
+        $parent = Split-Path -Parent $Destination
+        if ($parent) {
+            New-Item -ItemType Directory -Force -Path $parent | Out-Null
+        }
+        Copy-Item -LiteralPath $Source -Destination $Destination -Force
     }
-
-    Write-Info "Starting gateway via $script"
-    Start-Process -FilePath $script -WorkingDirectory $StateDir | Out-Null
 }

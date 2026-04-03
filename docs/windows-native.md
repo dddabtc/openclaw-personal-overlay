@@ -4,15 +4,24 @@ These PowerShell helpers are for **Windows-native OpenClaw only**.
 
 They are **not** for WSL installs. If your OpenClaw instance runs inside WSL, use the Linux/overlay flow instead of these scripts.
 
-## What they do
+## Scope
 
-- require `windows-native` target semantics
-- verify `node`, `npm`, and `git` exist
-- detect `~/.openclaw/openclaw.json` and `~/.openclaw/gateway.cmd`
-- create a timestamped backup before editing
-- update the gateway port in both files
-- optionally restart the Windows-native gateway wrapper
-- rollback from the latest backup
+These helpers are **patch-only**.
+
+They do:
+- detect Windows-native OpenClaw install/state paths
+- back up files that will be overwritten by an overlay payload
+- copy overlay payload files into the Windows-native install/state tree
+- roll back from the latest backup snapshot
+
+They do **not**:
+- edit `openclaw.json` runtime settings
+- edit `gateway.cmd`
+- change gateway ports
+- manage WSL tasks, `wsl.exe`, or Linux systemd services
+- install OpenClaw itself
+
+## Backups
 
 Backups are stored under:
 
@@ -20,41 +29,47 @@ Backups are stored under:
 $HOME/.openclaw/overlay-windows-backups/
 ```
 
+Each apply run creates a timestamped backup directory containing only files that are about to be overwritten.
+
+## Payload format
+
+`apply-windows.ps1` expects a payload directory containing a `manifest.json`.
+
+Example manifest shape:
+
+```json
+{
+  "files": [
+    { "target": "installRoot", "path": "dist/reply.js" },
+    { "target": "stateDir", "path": "plugins/entries/example.json" }
+  ]
+}
+```
+
+Supported targets:
+- `installRoot`
+- `stateDir`
+
 ## Usage
 
-### Apply / change gateway port
+### Apply overlay payload
 
 ```powershell
-powershell -File .\scripts\windows\apply-windows.ps1 -Target windows-native -GatewayPort 18788 -RestartGateway
+powershell -File .\scripts\windows\apply-windows.ps1 -Target windows-native -PayloadPath .\dist-overlay
 ```
 
 ### Roll back latest backup
 
 ```powershell
-powershell -File .\scripts\windows\rollback-windows.ps1 -Target windows-native -RestartGateway
+powershell -File .\scripts\windows\rollback-windows.ps1 -Target windows-native
 ```
 
 ## Dual-stack hosts (example: host 136)
 
-If a machine runs both:
+On dual-stack machines that run both:
+- WSL OpenClaw
+- Windows-native OpenClaw
 
-- **WSL OpenClaw** and
-- **Windows-native OpenClaw**
+these scripts still remain **patch-only**.
 
-then do **not** bind them to the same port.
-
-Recommended split:
-
-- **WSL OpenClaw:** `18789`
-- **Windows-native OpenClaw:** `18788`
-
-The scripts here only manage the **Windows-native** side.
-
-## Notes
-
-- The scripts intentionally stop on port conflicts.
-- They modify only:
-  - `~/.openclaw/openclaw.json`
-  - `~/.openclaw/gateway.cmd`
-- They do not install OpenClaw for you.
-- They do not manage WSL tasks, `wsl.exe`, or Linux systemd services.
+Runtime port allocation (for example WSL `18789` vs Windows-native `18788`) is a separate operational concern and is intentionally out of scope here.
