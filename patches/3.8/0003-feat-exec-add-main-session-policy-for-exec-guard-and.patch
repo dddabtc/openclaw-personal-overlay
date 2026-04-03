@@ -1,4 +1,4 @@
-From de4e33db7543fc61c5621735cbc04446ec7c4822 Mon Sep 17 00:00:00 2001
+From 0099619184146570af099f4bdaabf301b180d7ea Mon Sep 17 00:00:00 2001
 From: dda <dddabtc@users.noreply.github.com>
 Date: Tue, 31 Mar 2026 22:26:22 -0300
 Subject: [PATCH] feat(exec): add main session policy for exec guard and SSH
@@ -9,10 +9,11 @@ Subject: [PATCH] feat(exec): add main session policy for exec guard and SSH
  1 file changed, 20 insertions(+)
 
 diff --git a/src/agents/bash-tools.exec-types.ts b/src/agents/bash-tools.exec-types.ts
-index 7417da612a..04dd7032bf 100644
+index 349b7ef0e..628edce47 100644
 --- a/src/agents/bash-tools.exec-types.ts
 +++ b/src/agents/bash-tools.exec-types.ts
-@@ -1,4 +1,22 @@
+@@ -1,5 +1,23 @@
+ import type { ExecApprovalDecision } from "../infra/exec-approvals.js";
  import type { ExecAsk, ExecHost, ExecSecurity, ExecTarget } from "../infra/exec-approvals.js";
 +
 +/**
@@ -35,15 +36,15 @@ index 7417da612a..04dd7032bf 100644
  import type { SafeBinProfileFixture } from "../infra/exec-safe-bin-policy.js";
  import type { BashSandboxConfig } from "./bash-tools.shared.js";
  
-@@ -28,6 +46,8 @@ export type ExecToolDefaults = {
+@@ -29,6 +47,8 @@ export type ExecToolDefaults = {
+   accountId?: string;
    notifyOnExit?: boolean;
    notifyOnExitEmptySuccess?: boolean;
-   cwd?: string;
 +  /** PERSONAL BUILD: Main session execution policy. */
 +  mainSessionPolicy?: ExecMainSessionPolicy;
+   cwd?: string;
  };
  
- export type ExecElevatedDefaults = {
 -- 
 2.25.1
 
