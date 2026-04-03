@@ -88,3 +88,9 @@ Pre-built overlays: <https://github.com/dddabtc/openclaw-personal-overlay/releas
 
 Operational runbook for upgrades and failed-release remediation:
 - [docs/RELEASE-OPERATIONS.md](docs/RELEASE-OPERATIONS.md)
+
+## Windows-native support
+
+For Windows-native OpenClaw, use the patch-only PowerShell helpers:
+- [docs/windows-native.md](docs/windows-native.md)
+- [docs/windows-payload-example/](docs/windows-payload-example/)

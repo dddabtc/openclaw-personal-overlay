@@ -1,0 +1,12 @@
+{
+  "files": [
+    {
+      "target": "installRoot",
+      "path": "dist/reply-example.js"
+    },
+    {
+      "target": "stateDir",
+      "path": "plugins/entries/example-plugin.json"
+    }
+  ]
+}
