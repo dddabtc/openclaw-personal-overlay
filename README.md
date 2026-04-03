@@ -43,6 +43,8 @@ git clone https://github.com/dddabtc/openclaw-personal-overlay.git
 cd openclaw-personal-overlay
 ```
 
+### Linux / macOS
+
 Check compatibility:
 ```bash
 bin/openclaw-personal status
@@ -56,6 +58,16 @@ bin/openclaw-personal apply
 Undo everything:
 ```bash
 bin/openclaw-personal rollback
+```
+
+### Windows-native OpenClaw
+
+Use the same `bin` entrypoint style via the Windows wrapper:
+
+```powershell
+bin\openclaw-personal.cmd status
+bin\openclaw-personal.cmd apply .\docs\windows-payload-example
+bin\openclaw-personal.cmd rollback
 ```
 
 ### Source tree mode

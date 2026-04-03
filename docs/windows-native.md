@@ -52,6 +52,16 @@ Supported targets:
 
 ## Usage
 
+Preferred entrypoint from a fresh clone:
+
+```powershell
+bin\openclaw-personal.cmd status
+bin\openclaw-personal.cmd apply .\docs\windows-payload-example
+bin\openclaw-personal.cmd rollback
+```
+
+Direct script usage also works:
+
 ### Apply overlay payload
 
 ```powershell

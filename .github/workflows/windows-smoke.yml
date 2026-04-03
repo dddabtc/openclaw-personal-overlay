@@ -22,6 +22,13 @@ jobs:
           . ./scripts/windows/lib/common.ps1
           Get-Command ./scripts/windows/apply-windows.ps1 | Out-Null
           Get-Command ./scripts/windows/rollback-windows.ps1 | Out-Null
+          Get-Command ./bin/openclaw-personal.ps1 | Out-Null
+
+      - name: Check bin wrapper help path
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./bin/openclaw-personal.ps1 status
 
       - name: Validate example manifest
         shell: pwsh
