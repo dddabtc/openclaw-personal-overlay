@@ -172,6 +172,8 @@ jobs:
           git clone --quiet https://github.com/openclaw/openclaw.git "$workdir/upstream"
           cd "$workdir/upstream"
           git checkout --quiet "$TARGET_COMMIT"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git am /home/runner/work/openclaw-personal-overlay/openclaw-personal-overlay/${PATCH_SET_DIR}/*.patch
           echo "Patch preflight passed for ${TARGET_COMMIT} using ${PATCH_SET_DIR}"
 
