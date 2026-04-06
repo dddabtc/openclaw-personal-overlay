@@ -85,7 +85,7 @@ function New-Backup([string]$InstallRoot, [string]$BackupRoot, [string[]]$RelPat
             $par = [System.IO.Path]::GetDirectoryName($dst)
             if ($par) { New-Item -ItemType Directory -Force -Path $par | Out-Null }
             Copy-Item -LiteralPath $src -Destination $dst -Force
-            Info "  backed up: $rel"
+            # backed up silently
         }
     }
     return $backDir
@@ -180,8 +180,9 @@ try {
         $par = [System.IO.Path]::GetDirectoryName($dst)
         if ($par) { New-Item -ItemType Directory -Force -Path $par | Out-Null }
         Copy-Item -LiteralPath $src -Destination $dst -Force
-        Info "Applied: $rel"
     }
+    $applied = ($relPaths | Where-Object { $_ }).Count
+    Info "Applied $applied file(s)"
 } finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }

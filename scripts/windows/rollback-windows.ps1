@@ -110,7 +110,6 @@ Get-ChildItem -Path $backupDir -Recurse -File | ForEach-Object {
     $par = Split-Path -Parent $dst
     if ($par) { New-Item -ItemType Directory -Force -Path $par | Out-Null }
     Copy-Item -LiteralPath $_.FullName -Destination $dst -Force
-    Info "Restored: $relative"
     $restored++
 }
 
