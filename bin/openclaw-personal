@@ -79,6 +79,11 @@ resolve_openclaw_install_root() {
     "/usr/lib/node_modules/openclaw"
   )
 
+  # NVM detection
+  local nvm_root
+  nvm_root="$(find_nvm_openclaw 2>/dev/null || true)"
+  [[ -n "$nvm_root" ]] && candidates+=("$nvm_root")
+
   local found=()
   local c
   for c in "${candidates[@]}"; do
