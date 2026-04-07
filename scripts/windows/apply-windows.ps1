@@ -42,6 +42,14 @@ function Find-OpenClawRoot {
     foreach ($c in ($candidates | Where-Object { $_ } | Select-Object -Unique)) {
         if (Test-Path (Join-Path $c 'package.json')) { return $c }
     }
+    # NVM for Windows detection
+    $nvmDir = Join-Path $env:APPDATA "nvm"
+    if (Test-Path $nvmDir) {
+        Get-ChildItem -Path $nvmDir -Directory -Filter "v*" | ForEach-Object {
+            $c = Join-Path $_.FullName "node_modules\openclaw"
+            if (Test-Path (Join-Path $c "package.json")) { return $c }
+        }
+    }
     Fail 'Could not locate Windows-native OpenClaw install root. Set OPENCLAW_INSTALL_ROOT or ensure global npm install is present.'
 }
 

@@ -578,3 +578,24 @@ case "$cmd" in
     exit $E_USAGE
     ;;
 esac
+
+# NVM-aware detection
+find_nvm_openclaw() {
+  local nvm_dir="${NVM_DIR:-$HOME/.nvm}"
+  # Check common nvm locations
+  for ver_dir in "$nvm_dir"/versions/node/*/lib/node_modules/openclaw; do
+    if [[ -f "$ver_dir/package.json" ]]; then
+      echo "$ver_dir"
+      return 0
+    fi
+  done
+  # Windows NVM
+  local win_nvm="$HOME/AppData/Roaming/nvm"
+  for ver_dir in "$win_nvm"/v*/node_modules/openclaw; do
+    if [[ -f "$ver_dir/package.json" ]]; then
+      echo "$ver_dir"
+      return 0
+    fi
+  done
+  return 1
+}
