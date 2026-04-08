@@ -68,10 +68,49 @@ jobs:
             exit 1
           fi
 
-          tag="v${npm_latest}"
-          gh api "repos/${UPSTREAM_REPO}/git/ref/tags/${tag}" >/dev/null
+          base_tag="v${npm_latest}"
+          stem_version="$(printf '%s' "$npm_latest" | sed -E 's/-[A-Za-z0-9.]+$//')"
+          stem_tag="v${stem_version}"
 
-          echo "latest_tag=${tag}" >> "$GITHUB_OUTPUT"
+          # Verify upstream has a matching release tag.
+          # Handle both directions of suffix skew between npm and git tags:
+          # - npm=2026.3.23, upstream=v2026.3.23-2
+          # - npm=2026.3.23-2, upstream=v2026.3.23
+          resolved_tag=""
+          if gh api "repos/${UPSTREAM_REPO}/git/ref/tags/${base_tag}" >/dev/null 2>&1; then
+            resolved_tag="$base_tag"
+            echo "Verified exact upstream tag: ${resolved_tag}" >&2
+          else
+            echo "Exact tag ${base_tag} not found, searching for compatible tags..." >&2
+            resolved_tag="$(gh api "repos/${UPSTREAM_REPO}/git/matching-refs/tags/${base_tag}-" \
+              --jq '[.[].ref | ltrimstr("refs/tags/") | select(test("-\\d+$"))] | sort | last // empty' 2>/dev/null || true)"
+            if [ -z "$resolved_tag" ]; then
+              resolved_tag="$(gh api "repos/${UPSTREAM_REPO}/git/matching-refs/tags/${base_tag}-" \
+                --jq '[.[].ref | ltrimstr("refs/tags/")] | sort | last // empty' 2>/dev/null || true)"
+            fi
+            if [ -z "$resolved_tag" ] && [ "$stem_tag" != "$base_tag" ]; then
+              if gh api "repos/${UPSTREAM_REPO}/git/ref/tags/${stem_tag}" >/dev/null 2>&1; then
+                resolved_tag="$stem_tag"
+              fi
+            fi
+            if [ -z "$resolved_tag" ] && [ "$stem_tag" != "$base_tag" ]; then
+              resolved_tag="$(gh api "repos/${UPSTREAM_REPO}/git/matching-refs/tags/${stem_tag}-" \
+                --jq '[.[].ref | ltrimstr("refs/tags/") | select(test("-\\d+$"))] | sort | last // empty' 2>/dev/null || true)"
+              if [ -z "$resolved_tag" ]; then
+                resolved_tag="$(gh api "repos/${UPSTREAM_REPO}/git/matching-refs/tags/${stem_tag}-" \
+                  --jq '[.[].ref | ltrimstr("refs/tags/")] | sort | last // empty' 2>/dev/null || true)"
+              fi
+            fi
+
+            if [ -z "$resolved_tag" ]; then
+              echo "No upstream tag found matching ${base_tag}, ${base_tag}-*, ${stem_tag}, or ${stem_tag}-*" >&2
+              exit 1
+            fi
+            echo "Verified compatible upstream tag: ${resolved_tag}" >&2
+          fi
+
+          echo "latest_tag=${base_tag}" >> "$GITHUB_OUTPUT"
+          echo "resolved_upstream_tag=${resolved_tag}" >> "$GITHUB_OUTPUT"
 
       - name: Compare compatibility support vs upstream
         id: compare
@@ -85,9 +124,10 @@ jobs:
           latest = os.environ['LATEST'].lstrip('v')
           with open('compatibility.json','r',encoding='utf-8') as f:
             data = json.load(f)
-          raw_versions = [s['openclawVersion'] for s in data.get('supported',[]) if s.get('openclawVersion')]
-          max_supported = sorted(raw_versions, key=norm)[-1] if raw_versions else '0'
-          needs_update = norm(max_supported) < norm(latest)
+          supported = [s.get('openclawVersion') for s in data.get('supported',[]) if s.get('openclawVersion')]
+          max_supported = sorted(supported, key=norm)[-1] if supported else '0'
+          present = latest in set(supported)
+          needs_update = not present
           with open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8') as o:
             print(f"max_supported={max_supported}", file=o)
             print(f"needs_update={'true' if needs_update else 'false'}", file=o)
@@ -100,8 +140,12 @@ jobs:
           HAS_RESIDUE: ${{ steps.failstate.outputs.has_residue }}
           NEEDS_UPDATE: ${{ steps.compare.outputs.needs_update }}
         run: |
+          # Only run full-flow/release when we are already compatible.
+          # If upstream bumped beyond compatibility.json, hand off to autofix first.
           run_full=false
-          if [ "$FORCE" = "true" ] || { [ "$NEEDS_UPDATE" = "false" ] && [ "$HAS_RESIDUE" = "false" ]; }; then
+          if [ "$FORCE" = "true" ]; then
+            run_full=true
+          elif [ "$NEEDS_UPDATE" = "false" ] && [ "$HAS_RESIDUE" = "false" ]; then
             run_full=true
           fi
           echo "run_full=$run_full" >> "$GITHUB_OUTPUT"
@@ -129,7 +173,7 @@ jobs:
 
   full-flow:
     needs: detect
-    if: needs.detect.outputs.run_full == 'true'
+    if: needs.detect.outputs.run_full == 'true' && needs.detect.outputs.needs_update == 'false'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -140,7 +184,7 @@ jobs:
 
   release:
     needs: [detect, full-flow]
-    if: needs.detect.outputs.run_full == 'true' && needs.full-flow.result == 'success'
+    if: needs.detect.outputs.run_full == 'true' && needs.detect.outputs.needs_update == 'false' && needs.full-flow.result == 'success' && github.ref_name == 'main'
     uses: ./.github/workflows/release.yml
     with:
       release_tag: ${{ needs.detect.outputs.release_tag }}
@@ -150,7 +194,7 @@ jobs:
 
   clear-residue-on-success:
     needs: [detect, full-flow]
-    if: needs.detect.outputs.run_full == 'true' && success()
+    if: needs.detect.outputs.run_full == 'true' && needs.detect.outputs.needs_update == 'false' && success()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/github-script@v7
@@ -166,7 +210,7 @@ jobs:
 
   mark-failure-and-trigger-autofix:
     needs: [detect, full-flow]
-    if: needs.detect.outputs.run_full == 'true' && needs.full-flow.result == 'failure'
+    if: needs.detect.outputs.run_full == 'true' && needs.detect.outputs.needs_update == 'false' && needs.full-flow.result == 'failure'
     runs-on: ubuntu-latest
     steps:
       - name: Persist failure residue

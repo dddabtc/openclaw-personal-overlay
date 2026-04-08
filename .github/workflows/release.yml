@@ -101,6 +101,10 @@ jobs:
           echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
           echo "source_run_url=${source_run_url}" >> "$GITHUB_OUTPUT"
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -156,6 +160,23 @@ jobs:
               gh.write(f"patch_set_dir={target['patchSetDir']}\n")
           PY
 
+      - name: Preflight patch-apply check
+        env:
+          TARGET_COMMIT: ${{ steps.compat.outputs.target_commit }}
+          PATCH_SET_DIR: ${{ steps.compat.outputs.patch_set_dir }}
+        run: |
+          set -euo pipefail
+          workdir="$(mktemp -d)"
+          trap 'rm -rf "$workdir"' EXIT
+
+          git clone --quiet https://github.com/openclaw/openclaw.git "$workdir/upstream"
+          cd "$workdir/upstream"
+          git checkout --quiet "$TARGET_COMMIT"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git am /home/runner/work/openclaw-personal-overlay/openclaw-personal-overlay/${PATCH_SET_DIR}/*.patch
+          echo "Patch preflight passed for ${TARGET_COMMIT} using ${PATCH_SET_DIR}"
+
       - name: Update CHANGELOG
         env:
           RELEASE_TAG: ${{ steps.normalize.outputs.release_tag }}
@@ -196,61 +217,20 @@ jobs:
             echo "Ref is not a branch (${{ github.ref }}), skipping push"
           fi
 
-      - name: Prepare patched upstream dist
-        id: patch
-        env:
-          PATCH_SET_DIR: ${{ steps.compat.outputs.patch_set_dir }}
-          UPSTREAM_BASE: ${{ steps.compat.outputs.upstream_base }}
-        run: |
-          test -d "$PATCH_SET_DIR"
-          mapfile -t patch_files < <(find "${GITHUB_WORKSPACE}/${PATCH_SET_DIR}" -maxdepth 1 -type f -name '*.patch' | sort)
-          if [ "${#patch_files[@]}" -eq 0 ]; then
-            echo "No patch files found in ${PATCH_SET_DIR}, skipping patched build"
-            echo "has_patches=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "has_patches=true" >> "$GITHUB_OUTPUT"
-          git clone --filter=blob:none --no-checkout https://github.com/openclaw/openclaw.git /tmp/openclaw-src
-          cd /tmp/openclaw-src
-          git checkout "$UPSTREAM_BASE"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git am "${patch_files[@]}"
-          corepack enable
-          pnpm install --no-frozen-lockfile
-          pnpm -s build
+      - name: Enable corepack
+        run: corepack enable
 
-      - name: Build dist overlay package
-        if: steps.patch.outputs.has_patches == 'true'
+      - name: Run full release gate
         env:
           OVERLAY_VERSION: ${{ steps.normalize.outputs.release_tag }}
-          TARGET_VERSION: ${{ steps.compat.outputs.target_version }}
-          TARGET_COMMIT: ${{ steps.compat.outputs.target_commit }}
         run: |
-          scripts/build-dist-overlay.sh /tmp/openclaw-src dist-overlay
-
-      - name: "Preflight gate: validate dist/plugin-sdk exports completeness"
-        if: steps.patch.outputs.has_patches == 'true'
-        env:
-          TARGET_VERSION: ${{ steps.compat.outputs.target_version }}
-        run: |
-          set -euo pipefail
-          bash scripts/validate-dist-exports.sh dist-overlay/payload "$TARGET_VERSION"
-
-      - name: "Preflight gate: required release assets must exist"
-        if: steps.patch.outputs.has_patches == 'true'
-        run: |
-          set -euo pipefail
-          required=(dist-overlay.tar.gz dist-overlay.tar.gz.sha256)
-          for f in "${required[@]}"; do
-            if [ ! -s "$f" ]; then
-              echo "Missing required release asset: $f" >&2
-              exit 1
-            fi
-          done
+          scripts/ci-release-gate.sh \
+            --version "${{ steps.compat.outputs.target_version }}" \
+            --commit "${{ steps.compat.outputs.target_commit }}" \
+            --patch-dir "${{ steps.compat.outputs.patch_set_dir }}" \
+            --out-prefix dist-overlay
 
       - name: Create tag and release
-        if: steps.patch.outputs.has_patches == 'true'
         env:
           GH_TOKEN: ${{ secrets.OC_GH_TOKEN }}
           RELEASE_TAG: ${{ steps.normalize.outputs.release_tag }}
@@ -268,7 +248,6 @@ jobs:
           gh release view "${RELEASE_TAG}" >/dev/null 2>&1 || gh release create "${RELEASE_TAG}" --title "${RELEASE_TAG}" --notes-file /tmp/release-notes.md
 
       - name: Upload release assets
-        if: steps.patch.outputs.has_patches == 'true'
         env:
           GH_TOKEN: ${{ secrets.OC_GH_TOKEN }}
           RELEASE_TAG: ${{ steps.normalize.outputs.release_tag }}
@@ -276,7 +255,6 @@ jobs:
           gh release upload "${RELEASE_TAG}" dist-overlay.tar.gz dist-overlay.tar.gz.sha256 --clobber
 
       - name: "Postflight gate: verify published release assets via GitHub API"
-        if: steps.patch.outputs.has_patches == 'true'
         env:
           GH_TOKEN: ${{ secrets.OC_GH_TOKEN }}
           RELEASE_TAG: ${{ steps.normalize.outputs.release_tag }}

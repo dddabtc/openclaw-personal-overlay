@@ -15,14 +15,14 @@ on:
         default: ''
       upstream_tag:
         description: Upstream tag to target
-        required: false
+        required: true
         type: string
-        default: ''
 
 permissions:
   contents: write
   issues: write
   pull-requests: write
+  actions: write
 
 jobs:
   autofix:
@@ -32,6 +32,15 @@ jobs:
         with:
           token: ${{ secrets.OC_GH_TOKEN }}
 
+      - name: Enforce single-token secret
+        env:
+          SINGLE_TOKEN: ${{ secrets.OC_GH_TOKEN }}
+        run: |
+          if [ -z "${SINGLE_TOKEN}" ]; then
+            echo '{"error_code":"E_SINGLE_TOKEN_MISSING","required_secret":"OC_GH_TOKEN"}'
+            exit 1
+          fi
+
       - name: Log autofix trigger
         run: |
           echo "reason=${{ github.event.inputs.reason }}"
@@ -39,69 +48,117 @@ jobs:
           echo "upstream_tag=${{ github.event.inputs.upstream_tag }}"
 
       - name: Update compatibility.json for upstream tag
+        id: update
         env:
           UPSTREAM_TAG: ${{ github.event.inputs.upstream_tag }}
         run: |
           set -euo pipefail
-          if [ -z "${UPSTREAM_TAG}" ]; then
-            echo "No upstream_tag provided, skipping compatibility update."
-            exit 0
-          fi
-
           version="${UPSTREAM_TAG#v}"
-          python3 - <<PY
-          import json, os, sys
+          commit_sha="$(npm view "openclaw@${version}" gitHead 2>/dev/null || true)"
+          if [ -z "$commit_sha" ]; then
+            echo "gitHead not found in npm metadata for openclaw@${version}, falling back to GitHub API tag resolution" >&2
+            # Use curl (unauthenticated) — GITHUB_TOKEN is scoped to this repo only, not openclaw/openclaw
+            tag_ref_json="$(curl -sf "https://api.github.com/repos/openclaw/openclaw/git/refs/tags/${UPSTREAM_TAG}" 2>/dev/null || true)"
+            if [ -n "$tag_ref_json" ]; then
+              tag_object_sha="$(echo "$tag_ref_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['object']['sha'])" 2>/dev/null || true)"
+              tag_type="$(echo "$tag_ref_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['object']['type'])" 2>/dev/null || true)"
+              if [ "$tag_type" = "tag" ] && [ -n "$tag_object_sha" ]; then
+                # Annotated tag — dereference to get the commit SHA
+                commit_sha="$(curl -sf "https://api.github.com/repos/openclaw/openclaw/git/tags/${tag_object_sha}" 2>/dev/null \
+                  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['object']['sha'])" 2>/dev/null || true)"
+              else
+                commit_sha="$tag_object_sha"
+              fi
+            fi
+          fi
+          if [ -z "$commit_sha" ]; then
+            echo "Cannot resolve commit SHA for openclaw@${version} (tried npm gitHead and GitHub API)" >&2
+            exit 1
+          fi
+          echo "Resolved commit_sha=${commit_sha}"
+
+          COMMIT_SHA="$commit_sha" python3 - <<PY
+          import json, os
           version = os.environ['UPSTREAM_TAG'].lstrip('v')
+          commit_sha = os.environ['COMMIT_SHA']
           path = 'compatibility.json'
           with open(path, 'r', encoding='utf-8') as f:
               data = json.load(f)
           supported = data.get('supported', [])
-          existing = [s for s in supported if s.get('openclawVersion') == version]
-          if existing:
-              print(f"Version {version} already in compatibility.json, nothing to do.")
-              sys.exit(0)
-          import subprocess
-          result = subprocess.run(['npm', 'view', f'openclaw@{version}', 'gitHead'], capture_output=True, text=True)
-          commit_sha = result.stdout.strip()
-          if not commit_sha:
-              print(f"WARNING: could not resolve commitSha for openclaw@{version}")
-              sys.exit(1)
-          # Derive patchSetDir from latest supported entry's convention
-          latest_patch = None
-          for s in reversed(supported):
-              if s.get('patchSetDir') and s.get('status') in ('supported', 'compatible', None):
-                  latest_patch = s
+
+          exists = None
+          for s in supported:
+              if s.get('openclawVersion') == version:
+                  exists = s
                   break
-          # Default patchSetDir: patches/<major.minor> from version
-          parts = version.split('.')
-          default_patch_dir = f"patches/{parts[-1]}" if len(parts) >= 2 else f"patches/{version}"
-          patch_dir = latest_patch['patchSetDir'] if latest_patch else default_patch_dir
-          supported.append({
-              'id': f'oc-{version}-personal-overlay',
-              'openclawVersion': version,
-              'commitSha': commit_sha,
-              'upstreamBaseCommit': commit_sha,
-              'patchSetDir': patch_dir,
-              'binaryArtifact': 'dist-overlay.tar.gz',
-              'atlasCompat': {'memory_search': 'expected', 'memory_get': 'expected'},
-              'status': 'compatible',
-              'notes': 'auto-added by autofix',
-          })
-          data['supported'] = supported
-          with open(path, 'w', encoding='utf-8') as f:
-              json.dump(data, f, indent=2, ensure_ascii=False)
-              f.write('\n')
-          print(f"Added {version} to compatibility.json")
+
+          if exists is None:
+              import re
+              def vkey(x):
+                  return tuple(int(n) for n in re.findall(r'\d+', x or '0'))
+              candidates = [s for s in supported if s.get('status') != 'deprecated' and s.get('patchSetDir') and s.get('openclawVersion')]
+              latest_supported = sorted(candidates, key=lambda s: vkey(s.get('openclawVersion')))[-1] if candidates else None
+              patch_dir = latest_supported.get('patchSetDir') if latest_supported else f"patches/{version.split('.')[-1]}"
+              entry = {
+                  'id': f'oc-{version}-personal-overlay',
+                  'openclawVersion': version,
+                  'commitSha': commit_sha,
+                  'upstreamBaseCommit': commit_sha,
+                  'patchSetDir': patch_dir,
+                  'binaryArtifact': 'dist-overlay.tar.gz',
+                  'atlasCompat': {'memory_search': 'expected', 'memory_get': 'expected'},
+                  'status': 'compatible',
+                  'notes': 'auto-added by autofix',
+              }
+              supported.insert(0, entry)
+              changed = True
+          else:
+              changed = False
+              if exists.get('commitSha') != commit_sha:
+                  exists['commitSha'] = commit_sha
+                  changed = True
+              if not exists.get('upstreamBaseCommit'):
+                  exists['upstreamBaseCommit'] = commit_sha
+                  changed = True
+              if not exists.get('status'):
+                  exists['status'] = 'compatible'
+                  changed = True
+
+          if changed:
+              data['supported'] = supported
+              with open(path, 'w', encoding='utf-8') as f:
+                  json.dump(data, f, indent=2, ensure_ascii=False)
+                  f.write('\n')
+          print('changed=' + ('true' if changed else 'false'))
           PY
 
+          echo "resolved_version=${version}" >> "$GITHUB_OUTPUT"
+          echo "resolved_commit=${commit_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate compatibility file
+        run: python3 scripts/validate-compatibility.py compatibility.json
+
       - name: Commit and push if changed
+        id: commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if git diff --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "No changes to commit."
           else
             git add compatibility.json
-            git commit -m "chore: autofix – add ${{ github.event.inputs.upstream_tag }} to compatibility.json"
-            git push
+            git commit -m "chore(compat): auto-add ${{ github.event.inputs.upstream_tag }} support baseline"
+            git push origin HEAD:main
+            echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Trigger release workflow for upstream tag
+        env:
+          GH_TOKEN: ${{ secrets.OC_GH_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh workflow run release.yml --repo "${{ github.repository }}" \
+            -f release_tag="overlay-v${{ steps.update.outputs.resolved_version }}" \
+            -f upstream_tag="v${{ steps.update.outputs.resolved_version }}" \
+            -f source_run_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"

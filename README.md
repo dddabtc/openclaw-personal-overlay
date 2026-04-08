@@ -6,6 +6,8 @@
 [![Release](https://img.shields.io/github/v/release/dddabtc/openclaw-personal-overlay)](https://github.com/dddabtc/openclaw-personal-overlay/releases)
 
 > 中文文档：**[README.zh-CN.md](./README.zh-CN.md)**
+>
+> Upstream OpenClaw: **[github.com/openclaw/openclaw](https://github.com/openclaw/openclaw)** · Docs: **[docs.openclaw.ai](https://docs.openclaw.ai)**
 
 ## Why
 
@@ -17,7 +19,8 @@ OpenClaw doesn't expose everything you might want to customize. This overlay let
 - **One-command workflow** — `status`, `apply`, `rollback`. That's it.
 - **Safe apply** — stages files before overwrite, backs up originals, verifies checksums.
 - **Two modes** — source patches (`git am`) or pre-built binary artifacts.
-- **Auto-compat CI** — detects new upstream versions and validates patch compatibility automatically.
+- **Release gate CI** — the release workflow rebuilds from fresh upstream source, applies patches with `git am`, runs targeted regression tests, builds the overlay, and validates the final artifact before publishing.
+- **Temp-dir failure analysis** — when release/CI fails, the intended local remediation flow is: detect failure, analyze upstream and patch drift in a temp dir, validate fixes on host `192.168.1.193`, then re-trigger release.
 
 ## Included patches
 
@@ -41,6 +44,8 @@ git clone https://github.com/dddabtc/openclaw-personal-overlay.git
 cd openclaw-personal-overlay
 ```
 
+### Linux / macOS
+
 Check compatibility:
 ```bash
 bin/openclaw-personal status
@@ -54,6 +59,16 @@ bin/openclaw-personal apply
 Undo everything:
 ```bash
 bin/openclaw-personal rollback
+```
+
+### Windows-native OpenClaw
+
+Use the same `bin` entrypoint style via the Windows wrapper:
+
+```powershell
+bin\openclaw-personal.cmd status
+bin\openclaw-personal.cmd apply .\docs\windows-payload-example
+bin\openclaw-personal.cmd rollback
 ```
 
 ### Source tree mode
@@ -76,10 +91,19 @@ compatibility.json          — version matrix & overlay policy
 patches/                    — versioned patch queues
 scripts/                    — apply/rollback/build/validation helpers
 dist-overlay-local/         — pre-built binary overlay
-.github/workflows/          — CI, auto-compat, release automation
+.github/workflows/          — CI + manual release automation
 docs/                       — implementation details
 ```
 
 ## Releases
 
 Pre-built overlays: <https://github.com/dddabtc/openclaw-personal-overlay/releases>
+
+Operational runbook for upgrades and failed-release remediation:
+- [docs/RELEASE-OPERATIONS.md](docs/RELEASE-OPERATIONS.md)
+
+## Windows-native support
+
+For Windows-native OpenClaw, use the patch-only PowerShell helpers:
+- [docs/windows-native.md](docs/windows-native.md)
+- [docs/windows-payload-example/](docs/windows-payload-example/)

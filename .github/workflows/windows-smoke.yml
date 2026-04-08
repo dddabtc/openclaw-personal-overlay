@@ -1,0 +1,40 @@
+name: windows-smoke
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/windows/**'
+      - 'docs/windows-native.md'
+      - 'docs/windows-payload-example/**'
+      - '.github/workflows/windows-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  powershell-parse:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse Windows scripts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . ./scripts/windows/lib/common.ps1
+          Get-Command ./scripts/windows/apply-windows.ps1 | Out-Null
+          Get-Command ./scripts/windows/rollback-windows.ps1 | Out-Null
+          Get-Command ./bin/openclaw-personal.ps1 | Out-Null
+
+      - name: Check bin wrapper help path
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./bin/openclaw-personal.ps1 status
+
+      - name: Validate example manifest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $manifest = Get-Content -Raw ./docs/windows-payload-example/manifest.json | ConvertFrom-Json
+          if (-not $manifest.files -or $manifest.files.Count -lt 1) {
+            throw 'Example manifest has no files entries'
+          }

@@ -1,0 +1,28 @@
+From 7c0639a1236cde6877ca2d411e7e5f2132519b1d Mon Sep 17 00:00:00 2001
+From: overlay-gate <overlay-gate@example.com>
+Date: Tue, 10 Mar 2026 18:43:14 -0300
+Subject: [PATCH] test(telegram): expect control key for /status command
+
+---
+ src/telegram/sequential-key.test.ts | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/telegram/sequential-key.test.ts b/src/telegram/sequential-key.test.ts
+index 7dc09af25..9a3bd3f23 100644
+--- a/src/telegram/sequential-key.test.ts
++++ b/src/telegram/sequential-key.test.ts
+@@ -59,7 +59,10 @@ describe("getTelegramSequentialKey", () => {
+       { message: mockMessage({ chat: mockChat({ id: 123 }), text: "/stop" }) },
+       "telegram:123:control",
+     ],
+-    [{ message: mockMessage({ chat: mockChat({ id: 123 }), text: "/status" }) }, "telegram:123"],
++    [
++      { message: mockMessage({ chat: mockChat({ id: 123 }), text: "/status" }) },
++      "telegram:123:control",
++    ],
+     [
+       { message: mockMessage({ chat: mockChat({ id: 123 }), text: "stop" }) },
+       "telegram:123:control",
+-- 
+2.25.1
+

@@ -6,6 +6,8 @@
 [![Release](https://img.shields.io/github/v/release/dddabtc/openclaw-personal-overlay)](https://github.com/dddabtc/openclaw-personal-overlay/releases)
 
 > English docs: **[README.md](./README.md)**
+>
+> OpenClaw 上游仓库：**[github.com/openclaw/openclaw](https://github.com/openclaw/openclaw)** · 文档：**[docs.openclaw.ai](https://docs.openclaw.ai)**
 
 ## 为什么需要这个
 

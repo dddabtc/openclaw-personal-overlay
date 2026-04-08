@@ -1,0 +1,5 @@
+{
+  "name": "example-plugin",
+  "enabled": false,
+  "note": "Placeholder example for Windows payload manifest structure."
+}

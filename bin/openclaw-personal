@@ -171,19 +171,24 @@ release_artifact_for_tag() {
   local out="$STATE_DIR/tmp-artifact-${tag}-$(date +%s).tar.gz"
 
   if command -v gh >/dev/null 2>&1; then
-    gh release download "$tag" \
+    if gh release download "$tag" \
       --repo "$repo" \
       --pattern "dist-overlay.tar.gz" \
-      --output "$out" >/dev/null
-    echo "$out"
-    return 0
+      --output "$out" >/dev/null; then
+      echo "$out"
+      return 0
+    fi
+    return 1
   fi
 
   local version="${tag#overlay-v}"
   local url="https://github.com/${repo}/releases/download/overlay-v${version}/dist-overlay.tar.gz"
   echo "[openclaw-personal] gh not found; downloading artifact via curl: $url" >&2
-  curl -fsSL "$url" -o "$out"
-  echo "$out"
+  if curl -fsSL "$url" -o "$out"; then
+    echo "$out"
+    return 0
+  fi
+  return 1
 }
 
 resolve_openclaw_config_path() {
@@ -206,6 +211,10 @@ meta = {
     "existed": config_path.exists(),
     "hadTimeout": False,
     "previousTimeout": None,
+    "hadMaxConcurrent": False,
+    "previousMaxConcurrent": None,
+    "hadSubagents": False,
+    "previousSubagents": None,
 }
 
 cfg = {}
@@ -228,11 +237,30 @@ if not isinstance(defaults, dict):
     defaults = {}
     agents["defaults"] = defaults
 
+# Snapshot previous values for rollback
 if "timeoutSeconds" in defaults:
     meta["hadTimeout"] = True
     meta["previousTimeout"] = defaults.get("timeoutSeconds")
 
+if "maxConcurrent" in defaults:
+    meta["hadMaxConcurrent"] = True
+    meta["previousMaxConcurrent"] = defaults.get("maxConcurrent")
+
+subagents = defaults.get("subagents")
+if isinstance(subagents, dict):
+    meta["hadSubagents"] = True
+    meta["previousSubagents"] = dict(subagents)
+
+# Apply overlay config values
 defaults["timeoutSeconds"] = 21600
+defaults["maxConcurrent"] = 4
+
+if not isinstance(subagents, dict):
+    subagents = {}
+    defaults["subagents"] = subagents
+
+subagents["runTimeoutSeconds"] = 14400
+subagents["maxConcurrent"] = 8
 
 config_path.parent.mkdir(parents=True, exist_ok=True)
 config_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -277,14 +305,29 @@ if not isinstance(defaults, dict):
     defaults = {}
     agents["defaults"] = defaults
 
+# Restore timeoutSeconds
 if meta.get("hadTimeout"):
     defaults["timeoutSeconds"] = meta.get("previousTimeout")
 else:
     defaults.pop("timeoutSeconds", None)
-    if not defaults:
-        agents.pop("defaults", None)
-    if not agents:
-        cfg.pop("agents", None)
+
+# Restore maxConcurrent
+if meta.get("hadMaxConcurrent"):
+    defaults["maxConcurrent"] = meta.get("previousMaxConcurrent")
+else:
+    defaults.pop("maxConcurrent", None)
+
+# Restore subagents
+if meta.get("hadSubagents"):
+    defaults["subagents"] = meta.get("previousSubagents")
+else:
+    defaults.pop("subagents", None)
+
+# Clean up empty nested objects
+if not defaults:
+    agents.pop("defaults", None)
+if not agents:
+    cfg.pop("agents", None)
 
 if meta.get("existed"):
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -332,11 +375,10 @@ regular_apply() {
 
   if [[ -z "$artifact" ]]; then
     local version_tag="overlay-v${version}"
-    artifact="$(release_artifact_for_tag "$release_repo" "$version_tag" 2>/dev/null || true)"
-    if [[ -n "$artifact" ]]; then
+    if artifact="$(release_artifact_for_tag "$release_repo" "$version_tag" 2>/dev/null)"; then
       log "resolved version-matched artifact from release tag: ${version_tag}"
     else
-      err "failed to discover version-matched artifact (expected tag: ${version_tag})"
+      err "failed to discover version-matched artifact (expected tag: ${version_tag}, repo: ${release_repo})"
       exit $E_NOT_FOUND
     fi
   fi
@@ -408,7 +450,7 @@ regular_apply() {
     local config_path
     config_path="$(resolve_openclaw_config_path)"
     config_mutation_json="$(apply_overlay_config_timeout "$config_path")"
-    log "set agents.defaults.timeoutSeconds=21600 in $config_path"
+    log "set agents.defaults.{timeoutSeconds=21600,maxConcurrent=4,subagents.{runTimeoutSeconds=14400,maxConcurrent=8}} in $config_path"
   fi
 
   cat > "$INSTALL_STATE_FILE" <<JSON
@@ -423,6 +465,11 @@ regular_apply() {
   "configMutation": ${config_mutation_json}
 }
 JSON
+
+  # Apply runtime dist patches (cron timeout ceiling, etc.)
+  if [[ -x "$ROOT_DIR/scripts/patch-dist-cron-timeout.sh" ]]; then
+    "$ROOT_DIR/scripts/patch-dist-cron-timeout.sh" "$install_root" || log "WARN: cron timeout dist patch skipped (non-fatal)"
+  fi
 
   log "overlay applied successfully (overlayVersion=${overlay_version})"
 }

@@ -1,148 +1,247 @@
-From b2b5a53a45519d2cdc73fd8e1d0e1bbb60d69d91 Mon Sep 17 00:00:00 2001
-From: bot <bot@bot>
-Date: Mon, 9 Mar 2026 12:00:09 -0300
-Subject: [PATCH 4/4] feat(exec): add output cap for main session policy
+From 92ac87cd060ad3bb75f815a70dd5e818336a0168 Mon Sep 17 00:00:00 2001
+From: dda <dddabtc@users.noreply.github.com>
+Date: Thu, 2 Apr 2026 01:31:11 -0300
+Subject: [PATCH 4/9] feat(exec): rebase main-session policy on 2026.4.1
 
 ---
- src/agents/bash-tools.exec-types.ts    |  2 ++
- src/agents/bash-tools.exec.ts          | 16 ++++++++++++++--
- src/agents/pi-tools.ts                 |  4 ++++
- src/auto-reply/status.ts               |  7 +++++++
- src/config/types.tools.ts              | 16 ++++++++++++++++
- src/config/zod-schema.agent-runtime.ts | 14 ++++++++++++++
- 6 files changed, 57 insertions(+), 2 deletions(-)
+ ...h-tools.exec.main-session-defaults.test.ts |  35 ++++++
+ src/agents/bash-tools.exec.ts                 | 101 +++++++++++++++++-
+ src/agents/pi-tools.ts                        |   2 +
+ src/config/types.tools.ts                     |  13 +++
+ src/config/zod-schema.agent-runtime.ts        |  11 ++
+ 5 files changed, 160 insertions(+), 2 deletions(-)
+ create mode 100644 src/agents/bash-tools.exec.main-session-defaults.test.ts
 
-diff --git a/src/agents/bash-tools.exec-types.ts b/src/agents/bash-tools.exec-types.ts
-index d2c976c3a..6e638530a 100644
---- a/src/agents/bash-tools.exec-types.ts
-+++ b/src/agents/bash-tools.exec-types.ts
-@@ -15,6 +15,8 @@ export type ExecMainSessionPolicy = {
-   maxExecTimeoutSec?: number;
-   /** Block SSH-related commands (ssh, scp, sftp, rsync over ssh). */
-   blockSshCommands?: boolean;
-+  /** Maximum output bytes for main session (default: 50KB = 51200). */
-+  maxOutputBytes?: number;
- };
- 
- export type ExecToolDefaults = {
+diff --git a/src/agents/bash-tools.exec.main-session-defaults.test.ts b/src/agents/bash-tools.exec.main-session-defaults.test.ts
+new file mode 100644
+index 0000000000..18fe973503
+--- /dev/null
++++ b/src/agents/bash-tools.exec.main-session-defaults.test.ts
+@@ -0,0 +1,35 @@
++import { describe, expect, it } from "vitest";
++import { createExecTool } from "./bash-tools.exec.js";
++
++const createMainSessionExecTool = () =>
++  createExecTool({
++    sessionKey: "agent:main:main",
++    security: "full",
++    ask: "off",
++  });
++
++describe("main-session exec defaults", () => {
++  it("blocks long foreground exec without policy config", async () => {
++    const tool = createMainSessionExecTool();
++    await expect(
++      tool.execute("call", { command: "echo hello", timeout: 999 }, undefined),
++    ).rejects.toThrow(/Main session policy blocked exec/);
++  });
++
++  it("blocks ssh command without policy config", async () => {
++    const tool = createMainSessionExecTool();
++    await expect(
++      tool.execute("call", { command: "ssh user@example.com", timeout: 10 }, undefined),
++    ).rejects.toThrow(/blocked SSH command/);
++  });
++
++  it("allows short safe foreground exec", async () => {
++    const tool = createMainSessionExecTool();
++    const res = await tool.execute(
++      "call",
++      { command: "echo ok", timeout: 10, yieldMs: 1000 },
++      undefined,
++    );
++    expect(String((res.details as { aggregated?: string }).aggregated ?? "")).toContain("ok");
++  });
++});
 diff --git a/src/agents/bash-tools.exec.ts b/src/agents/bash-tools.exec.ts
-index 0c9118c42..0420f005b 100644
+index 41cd26c351..c7b7fb9c24 100644
 --- a/src/agents/bash-tools.exec.ts
 +++ b/src/agents/bash-tools.exec.ts
-@@ -336,8 +336,20 @@ export function createExecTool(
-         yieldMs: params.yieldMs,
-       });
+@@ -33,6 +33,7 @@ import {
+ } from "./bash-tools.exec-runtime.js";
+ import type {
+   ExecElevatedDefaults,
++  ExecMainSessionPolicy,
+   ExecToolDefaults,
+   ExecToolDetails,
+ } from "./bash-tools.exec-types.js";
+@@ -51,6 +52,7 @@ import { failedTextResult, textResult } from "./tools/common.js";
+ export type { BashSandboxConfig } from "./bash-tools.shared.js";
+ export type {
+   ExecElevatedDefaults,
++  ExecMainSessionPolicy,
+   ExecToolDefaults,
+   ExecToolDetails,
+ } from "./bash-tools.exec-types.js";
+@@ -197,6 +199,89 @@ function parseExecApprovalShellCommand(raw: string): ParsedExecApprovalCommand |
+   };
+ }
+ 
++const PERSONAL_MAIN_SESSION_POLICY_DEFAULTS: Required<
++  Pick<
++    ExecMainSessionPolicy,
++    "forbidLongExec" | "requireBackgroundForExec" | "blockSshCommands" | "maxOutputBytes"
++  >
++> & { maxExecTimeoutSec: number } = {
++  forbidLongExec: true,
++  requireBackgroundForExec: false,
++  maxExecTimeoutSec: 120,
++  blockSshCommands: true,
++  maxOutputBytes: 51_200,
++};
++
++function isMainAgentSession(sessionKey?: string): boolean {
++  if (!sessionKey) {
++    return false;
++  }
++  return sessionKey.trim() === "agent:main:main";
++}
++
++function resolveMainSessionPolicy(
++  policy?: ExecMainSessionPolicy,
++): typeof PERSONAL_MAIN_SESSION_POLICY_DEFAULTS {
++  return {
++    forbidLongExec: policy?.forbidLongExec ?? PERSONAL_MAIN_SESSION_POLICY_DEFAULTS.forbidLongExec,
++    requireBackgroundForExec:
++      policy?.requireBackgroundForExec ??
++      PERSONAL_MAIN_SESSION_POLICY_DEFAULTS.requireBackgroundForExec,
++    maxExecTimeoutSec:
++      typeof policy?.maxExecTimeoutSec === "number" && Number.isFinite(policy.maxExecTimeoutSec)
++        ? Math.max(1, Math.trunc(policy.maxExecTimeoutSec))
++        : PERSONAL_MAIN_SESSION_POLICY_DEFAULTS.maxExecTimeoutSec,
++    blockSshCommands:
++      policy?.blockSshCommands ?? PERSONAL_MAIN_SESSION_POLICY_DEFAULTS.blockSshCommands,
++    maxOutputBytes:
++      typeof policy?.maxOutputBytes === "number" && Number.isFinite(policy.maxOutputBytes)
++        ? Math.max(1, Math.trunc(policy.maxOutputBytes))
++        : PERSONAL_MAIN_SESSION_POLICY_DEFAULTS.maxOutputBytes,
++  };
++}
++
++function looksLikeSshCommand(command: string): boolean {
++  const normalized = command.trim().toLowerCase();
++  return (
++    /(^|[;&|(])\s*(ssh|scp|sftp)\b/.test(normalized) ||
++    /\brsync\b[^\n]*\b-e\s+ssh\b/.test(normalized)
++  );
++}
++
++function enforceMainSessionExecPolicy(params: {
++  sessionKey?: string;
++  policy?: ExecMainSessionPolicy;
++  command: string;
++  timeout?: number;
++  backgroundRequested: boolean;
++}): { policy: typeof PERSONAL_MAIN_SESSION_POLICY_DEFAULTS; isMainSession: boolean } {
++  const isMainSession = isMainAgentSession(params.sessionKey);
++  const policy = resolveMainSessionPolicy(params.policy);
++  if (!isMainSession) {
++    return { policy, isMainSession };
++  }
++  if (policy.blockSshCommands && looksLikeSshCommand(params.command)) {
++    throw new Error(
++      "Main session policy blocked SSH command. Use a delegated/background path instead.",
++    );
++  }
++  const timeoutSec =
++    typeof params.timeout === "number" && Number.isFinite(params.timeout)
++      ? Math.max(1, Math.trunc(params.timeout))
++      : policy.maxExecTimeoutSec;
++  if (policy.forbidLongExec && timeoutSec > policy.maxExecTimeoutSec) {
++    throw new Error(
++      `Main session policy blocked exec: foreground timeout ${timeoutSec}s exceeds ${policy.maxExecTimeoutSec}s. Use background=true/yieldMs or a subagent.`,
++    );
++  }
++  if (policy.requireBackgroundForExec && !params.backgroundRequested) {
++    throw new Error(
++      "Main session policy blocked exec: background=true is required in the main session.",
++    );
++  }
++  return { policy, isMainSession };
++}
++
+ function rejectExecApprovalShellCommand(command: string): void {
+   const isEnvAssignmentToken = (token: string): boolean =>
+     /^[A-Za-z_][A-Za-z0-9_]*=.*$/u.test(token);
+@@ -508,11 +593,23 @@ export function createExecTool(
+         throw new Error("Provide a command to start.");
+       }
  
 -      const maxOutput = DEFAULT_MAX_OUTPUT;
 -      const pendingMaxOutput = DEFAULT_PENDING_MAX_OUTPUT;
-+      // PERSONAL BUILD: Apply output cap from main session policy
-+      const policyMaxOutput = defaults?.mainSessionPolicy?.maxOutputBytes;
-+      const mainSessionOutputCap =
-+        isMainAgentSession(defaults?.sessionKey) &&
-+        typeof policyMaxOutput === "number" &&
-+        policyMaxOutput > 0
-+          ? policyMaxOutput
-+          : undefined;
+       const warnings: string[] = [];
+       let execCommandOverride: string | undefined;
+       const backgroundRequested = params.background === true;
++      const { policy: mainSessionPolicy, isMainSession } = enforceMainSessionExecPolicy({
++        sessionKey: defaults?.sessionKey,
++        policy: defaults?.mainSessionPolicy,
++        command: params.command,
++        timeout: params.timeout,
++        backgroundRequested,
++      });
++      const mainSessionOutputCap = isMainSession ? mainSessionPolicy.maxOutputBytes : undefined;
 +      const maxOutput = mainSessionOutputCap
 +        ? Math.min(DEFAULT_MAX_OUTPUT, mainSessionOutputCap)
 +        : DEFAULT_MAX_OUTPUT;
 +      const pendingMaxOutput = mainSessionOutputCap
 +        ? Math.min(DEFAULT_PENDING_MAX_OUTPUT, mainSessionOutputCap)
 +        : DEFAULT_PENDING_MAX_OUTPUT;
-       const warnings: string[] = [];
-       let execCommandOverride: string | undefined;
-       const backgroundRequested = params.background === true;
+       const yieldRequested = typeof params.yieldMs === "number";
+       if (!allowBackground && (backgroundRequested || yieldRequested)) {
+         warnings.push("Warning: background execution is disabled; running synchronously.");
 diff --git a/src/agents/pi-tools.ts b/src/agents/pi-tools.ts
-index 543a163ab..834cc70ee 100644
+index 64b9d23acd..2622cb8b87 100644
 --- a/src/agents/pi-tools.ts
 +++ b/src/agents/pi-tools.ts
-@@ -155,6 +155,8 @@ function resolveExecConfig(params: { cfg?: OpenClawConfig; agentId?: string }) {
+@@ -178,6 +178,7 @@ function resolveExecConfig(params: { cfg?: OpenClawConfig; agentId?: string }) {
      notifyOnExitEmptySuccess:
        agentExec?.notifyOnExitEmptySuccess ?? globalExec?.notifyOnExitEmptySuccess,
      applyPatch: agentExec?.applyPatch ?? globalExec?.applyPatch,
-+    // PERSONAL BUILD: Main session execution policy
 +    mainSessionPolicy: agentExec?.mainSessionPolicy ?? globalExec?.mainSessionPolicy,
    };
  }
  
-@@ -425,6 +427,8 @@ export function createOpenClawCodingTools(options?: {
-           env: sandbox.docker.env,
+@@ -477,6 +478,7 @@ export function createOpenClawCodingTools(options?: {
+           finalizeExec: sandbox.backend?.finalizeExec?.bind(sandbox.backend),
          }
        : undefined,
-+    // PERSONAL BUILD: Main session execution policy
 +    mainSessionPolicy: options?.exec?.mainSessionPolicy ?? execConfig.mainSessionPolicy,
    });
    const processTool = createProcessTool({
      cleanupMs: cleanupMsOverride ?? execConfig.cleanupMs,
-diff --git a/src/auto-reply/status.ts b/src/auto-reply/status.ts
-index d4c5e0c18..a90233b02 100644
---- a/src/auto-reply/status.ts
-+++ b/src/auto-reply/status.ts
-@@ -1,6 +1,10 @@
- import fs from "node:fs";
- import { resolveContextTokensForModel } from "../agents/context.js";
- import { DEFAULT_CONTEXT_TOKENS, DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
-+
-+// PERSONAL BUILD metadata injected at build time
-+const PERSONAL_BUILD_DATE = "__PERSONAL_BUILD_DATE__";
-+const PERSONAL_BUILD_REPO = "https://github.com/dddabtc";
- import { resolveModelAuthMode } from "../agents/model-auth.js";
- import {
-   buildModelAliasIndex,
-@@ -657,6 +661,8 @@ export function buildStatusMessage(args: StatusArgs): string {
-     : null;
-   const commit = resolveCommitHash({ moduleUrl: import.meta.url });
-   const versionLine = `🦞 OpenClaw ${VERSION}${commit ? ` (${commit})` : ""}`;
-+  // PERSONAL BUILD: Add build tag line
-+  const personalBuildLine = `🏷 PERSONAL BUILD · ${PERSONAL_BUILD_DATE}(UTC)\n${PERSONAL_BUILD_REPO}`;
-   const usagePair = formatUsagePair(inputTokens, outputTokens);
-   const cacheLine = formatCacheLine(inputTokens, cacheRead, cacheWrite);
-   const costLine = costLabel ? `💵 Cost: ${costLabel}` : null;
-@@ -667,6 +673,7 @@ export function buildStatusMessage(args: StatusArgs): string {
- 
-   return [
-     versionLine,
-+    personalBuildLine,
-     args.timeLine,
-     modelLine,
-     fallbackLine,
 diff --git a/src/config/types.tools.ts b/src/config/types.tools.ts
-index 897757584..be8e408d8 100644
+index f51cc5fc20..f9ddf0ad98 100644
 --- a/src/config/types.tools.ts
 +++ b/src/config/types.tools.ts
-@@ -272,6 +272,22 @@ export type ExecToolConfig = {
-      */
-     allowModels?: string[];
-   };
-+  /**
-+   * PERSONAL BUILD: Main session execution policy.
-+   * Controls restrictions on exec commands in the main agent session.
-+   */
+@@ -248,6 +248,19 @@ export type ExecToolConfig = {
+   safeBinTrustedDirs?: string[];
+   /** Optional custom safe-bin profiles for entries in tools.exec.safeBins. */
+   safeBinProfiles?: Record<string, SafeBinProfileFixture>;
++  /** PERSONAL BUILD: Main session execution policy overrides. */
 +  mainSessionPolicy?: {
-+    /** Block long-running foreground commands in main session. */
++    /** Block long-running foreground commands in the main session. */
 +    forbidLongExec?: boolean;
-+    /** Require background=true for all exec in main session. */
++    /** Require background=true for main-session exec. */
 +    requireBackgroundForExec?: boolean;
-+    /** Maximum allowed timeout (seconds) for foreground exec in main session. */
++    /** Maximum allowed timeout (seconds) for main-session foreground exec. */
 +    maxExecTimeoutSec?: number;
-+    /** Block SSH-related commands (ssh, scp, sftp, rsync over ssh). */
++    /** Block SSH-related commands in the main session. */
 +    blockSshCommands?: boolean;
-+    /** Maximum output bytes for main session (default: 50KB = 51200). */
++    /** Maximum output bytes for main-session exec results. */
 +    maxOutputBytes?: number;
 +  };
- };
- 
- export type FsToolsConfig = {
+   /** Default time (ms) before an exec command auto-backgrounds. */
+   backgroundMs?: number;
+   /** Default timeout (seconds) before auto-killing exec commands. */
 diff --git a/src/config/zod-schema.agent-runtime.ts b/src/config/zod-schema.agent-runtime.ts
-index 3ede7218b..20c8a33d1 100644
+index 440148c350..11ca39f9b0 100644
 --- a/src/config/zod-schema.agent-runtime.ts
 +++ b/src/config/zod-schema.agent-runtime.ts
-@@ -400,6 +400,18 @@ const ToolExecSafeBinProfileSchema = z
+@@ -422,6 +422,16 @@ const ToolExecSafeBinProfileSchema = z
    })
    .strict();
  
-+// PERSONAL BUILD: Main session execution policy schema
-+const MainSessionPolicySchema = z
++const ToolExecMainSessionPolicySchema = z
 +  .object({
 +    forbidLongExec: z.boolean().optional(),
 +    requireBackgroundForExec: z.boolean().optional(),
@@ -150,21 +249,19 @@ index 3ede7218b..20c8a33d1 100644
 +    blockSshCommands: z.boolean().optional(),
 +    maxOutputBytes: z.number().int().positive().optional(),
 +  })
-+  .strict()
-+  .optional();
++  .strict();
 +
  const ToolExecBaseShape = {
-   host: z.enum(["sandbox", "gateway", "node"]).optional(),
+   host: z.enum(["auto", "sandbox", "gateway", "node"]).optional(),
    security: z.enum(["deny", "allowlist", "full"]).optional(),
-@@ -415,6 +427,8 @@ const ToolExecBaseShape = {
-   notifyOnExit: z.boolean().optional(),
-   notifyOnExitEmptySuccess: z.boolean().optional(),
-   applyPatch: ToolExecApplyPatchSchema,
-+  // PERSONAL BUILD: Main session execution policy
-+  mainSessionPolicy: MainSessionPolicySchema,
- } as const;
- 
- const AgentToolExecSchema = z
+@@ -432,6 +442,7 @@ const ToolExecBaseShape = {
+   strictInlineEval: z.boolean().optional(),
+   safeBinTrustedDirs: z.array(z.string()).optional(),
+   safeBinProfiles: z.record(z.string(), ToolExecSafeBinProfileSchema).optional(),
++  mainSessionPolicy: ToolExecMainSessionPolicySchema.optional(),
+   backgroundMs: z.number().int().positive().optional(),
+   timeoutSec: z.number().int().positive().optional(),
+   cleanupMs: z.number().int().positive().optional(),
 -- 
 2.25.1
 

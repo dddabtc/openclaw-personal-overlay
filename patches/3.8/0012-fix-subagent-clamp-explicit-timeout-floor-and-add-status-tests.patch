@@ -1,0 +1,126 @@
+From 1111111111111111111111111111111111111111 Mon Sep 17 00:00:00 2001
+From: subagent-bot <subagent-bot@example.com>
+Date: Thu, 2 Apr 2026 06:38:00 -0300
+Subject: [PATCH] fix(subagent): clamp explicit timeout floor and cover status
+ banner
+
+---
+ src/agents/openclaw-tools.subagents.sessions-spawn-default-timeout-absent.test.ts |  4 ++--
+ src/agents/openclaw-tools.subagents.sessions-spawn-default-timeout.test.ts        | 21 +++++++++++++++++----
+ src/agents/subagent-spawn.ts                                                      |  8 ++++++--
+ src/auto-reply/status.test.ts                                                     | 18 ++++++++++++++++++
+ 4 files changed, 43 insertions(+), 8 deletions(-)
+
+diff --git a/src/agents/openclaw-tools.subagents.sessions-spawn-default-timeout-absent.test.ts b/src/agents/openclaw-tools.subagents.sessions-spawn-default-timeout-absent.test.ts
+index bf3275987..7a34fc4e6 100644
+--- a/src/agents/openclaw-tools.subagents.sessions-spawn-default-timeout-absent.test.ts
++++ b/src/agents/openclaw-tools.subagents.sessions-spawn-default-timeout-absent.test.ts
+@@ -37,13 +37,13 @@ describe("sessions_spawn default runTimeoutSeconds (config absent)", () => {
+     getCallGatewayMock().mockClear();
+   });
+ 
+-  it("falls back to 0 (no timeout) when config key is absent", async () => {
++  it("falls back to 21600 (6 hours) when config key is absent", async () => {
+     configureDefaultsWithoutTimeout();
+     const gateway = setupSessionsSpawnGatewayMock({});
+     const tool = await getSessionsSpawnTool({ agentSessionKey: MAIN_SESSION_KEY });
+ 
+     const result = await tool.execute("call-1", { task: "hello" });
+     expect(result.details).toMatchObject({ status: "accepted" });
+-    expect(readSpawnTimeout(gateway.calls)).toBe(0);
++    expect(readSpawnTimeout(gateway.calls)).toBe(21600);
+   });
+ });
+diff --git a/src/agents/openclaw-tools.subagents.sessions-spawn-default-timeout.test.ts b/src/agents/openclaw-tools.subagents.sessions-spawn-default-timeout.test.ts
+index 6066d97ba..a31849872 100644
+--- a/src/agents/openclaw-tools.subagents.sessions-spawn-default-timeout.test.ts
++++ b/src/agents/openclaw-tools.subagents.sessions-spawn-default-timeout.test.ts
+@@ -49,12 +49,31 @@ describe("sessions_spawn default runTimeoutSeconds", () => {
+     expect(getSubagentTimeout(gateway.calls)).toBe(900);
+   });
+ 
+-  it("explicit runTimeoutSeconds wins over config default", async () => {
++
++  it("clamps explicit positive runTimeoutSeconds values below 21600 up to the floor", async () => {
++    applySubagentTimeoutDefault(900);
++    const gateway = sessionsHarness.setupSessionsSpawnGatewayMock({});
++
++    await spawnSubagent("call-3", { task: "hello", runTimeoutSeconds: 300 });
++
++    expect(getSubagentTimeout(gateway.calls)).toBe(21600);
++  });
++
++  it("preserves explicit runTimeoutSeconds=0 semantics", async () => {
++    applySubagentTimeoutDefault(900);
++    const gateway = sessionsHarness.setupSessionsSpawnGatewayMock({});
++
++    await spawnSubagent("call-4", { task: "hello", runTimeoutSeconds: 0 });
++
++    expect(getSubagentTimeout(gateway.calls)).toBe(0);
++  });
++
++  it("preserves explicit runTimeoutSeconds values already at or above 21600", async () => {
+     applySubagentTimeoutDefault(900);
+     const gateway = sessionsHarness.setupSessionsSpawnGatewayMock({});
+ 
+-    await spawnSubagent("call-2", { task: "hello", runTimeoutSeconds: 300 });
++    await spawnSubagent("call-5", { task: "hello", runTimeoutSeconds: 28800 });
+ 
+-    expect(getSubagentTimeout(gateway.calls)).toBe(300);
++    expect(getSubagentTimeout(gateway.calls)).toBe(28800);
+   });
+ });
+diff --git a/src/agents/subagent-spawn.ts b/src/agents/subagent-spawn.ts
+index d5ea24aad..1938760ee 100644
+--- a/src/agents/subagent-spawn.ts
++++ b/src/agents/subagent-spawn.ts
+@@ -390,10 +390,16 @@ export async function spawnSubagentDirect(
+     Number.isFinite(cfg.agents.defaults.subagents.runTimeoutSeconds)
+       ? Math.max(0, Math.floor(cfg.agents.defaults.subagents.runTimeoutSeconds))
+       : PERSONAL_DEFAULT_SUBAGENT_TIMEOUT_SEC;
+-  const runTimeoutSeconds =
++  const requestedRunTimeoutSeconds =
+     typeof params.runTimeoutSeconds === "number" && Number.isFinite(params.runTimeoutSeconds)
+       ? Math.max(0, Math.floor(params.runTimeoutSeconds))
+-      : cfgSubagentTimeout;
++      : undefined;
++  const runTimeoutSeconds =
++    requestedRunTimeoutSeconds === undefined
++      ? cfgSubagentTimeout
++      : requestedRunTimeoutSeconds === 0
++        ? 0
++        : Math.max(PERSONAL_DEFAULT_SUBAGENT_TIMEOUT_SEC, requestedRunTimeoutSeconds);
+   let modelApplied = false;
+   let threadBindingReady = false;
+   const { mainKey, alias } = resolveMainSessionAlias(cfg);
+diff --git a/src/auto-reply/status.test.ts b/src/auto-reply/status.test.ts
+index 48979ceba..5c1f194c0 100644
+--- a/src/auto-reply/status.test.ts
++++ b/src/auto-reply/status.test.ts
+@@ -30,6 +30,24 @@ afterEach(() => {
+ });
+ 
+ describe("buildStatusMessage", () => {
++  it("includes the PERSONAL BUILD banner in chat status output", () => {
++    const text = buildStatusMessage({
++      agent: {
++        model: "anthropic/pi:opus",
++      },
++      sessionEntry: {
++        sessionId: "abc",
++        updatedAt: 0,
++      },
++      sessionKey: "agent:main:main",
++      queue: { mode: "collect", depth: 0 },
++    });
++    const normalized = normalizeTestText(text);
++
++    expect(normalized).toContain("PERSONAL BUILD");
++    expect(normalized).toContain("https://github.com/dddabtc");
++  });
++
+   it("summarizes agent readiness and context usage", () => {
+     const text = buildStatusMessage({
+       config: {
+-- 
+2.25.1

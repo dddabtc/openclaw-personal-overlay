@@ -162,12 +162,36 @@ fi
 
 scripts/validate-dist-exports.sh "$OUT_DIR/payload" "$TARGET_VERSION"
 
+# PERSONAL BUILD placeholder injection + guard
+PERSONAL_BUILD_DATE_UTC="${PERSONAL_BUILD_DATE_UTC:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+if grep -R --line-number "__PERSONAL_BUILD_DATE__" "$OUT_DIR/payload/dist" >/dev/null 2>&1; then
+  python3 - "$OUT_DIR/payload/dist" "$PERSONAL_BUILD_DATE_UTC" <<'PYSTAMP'
+import pathlib, sys
+root = pathlib.Path(sys.argv[1])
+stamp = sys.argv[2]
+for p in root.rglob('*'):
+    if not p.is_file():
+        continue
+    try:
+        data = p.read_text(encoding='utf-8')
+    except Exception:
+        continue
+    if '__PERSONAL_BUILD_DATE__' in data:
+        p.write_text(data.replace('__PERSONAL_BUILD_DATE__', stamp), encoding='utf-8')
+PYSTAMP
+fi
+if grep -R --line-number "__PERSONAL_BUILD_DATE__" "$OUT_DIR/payload/dist" >/dev/null 2>&1; then
+  echo "[ERR] unreplaced __PERSONAL_BUILD_DATE__ placeholder remains in overlay payload" >&2
+  exit 9
+fi
+
 cat > "$OUT_DIR/metadata.json" <<JSON
 {
   "format": "openclaw-personal-dist-overlay/v1",
   "overlayVersion": "$OVERLAY_VERSION",
   "targetOpenclawVersion": "$TARGET_VERSION",
   "targetCommitSha": "$TARGET_COMMIT",
+  "payloadMode": "$( [[ "$FULL_REPLACE" == "1" ]] && echo full-replace || echo diff )",
   "builtAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 JSON

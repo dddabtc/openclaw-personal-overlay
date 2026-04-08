@@ -1,0 +1,41 @@
+From 7e973f2ea8ff3dceda42889f6714a42997eaba41 Mon Sep 17 00:00:00 2001
+From: dda <dda@ddadeMac-mini.local>
+Date: Mon, 23 Mar 2026 10:14:13 -0300
+Subject: [PATCH] feat: slash commands bypass session queue (fast-path control)
+
+PERSONAL BUILD: All control commands (slash commands + abort triggers) bypass the session queue.
+- /status, /model, /reasoning, /help etc. execute immediately
+- No waiting behind long-running tasks
+- Uses :control lane in sequential key
+---
+ extensions/telegram/src/sequential-key.ts | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/extensions/telegram/src/sequential-key.ts b/extensions/telegram/src/sequential-key.ts
+index 5309a88a32..ecf8430b81 100644
+--- a/extensions/telegram/src/sequential-key.ts
++++ b/extensions/telegram/src/sequential-key.ts
+@@ -1,4 +1,5 @@
+ import { type Message, type UserFromGetMe } from "@grammyjs/types";
++import { isControlCommandMessage } from "openclaw/plugin-sdk/command-auth";
+ import { isAbortRequestText } from "openclaw/plugin-sdk/reply-runtime";
+ import { isBtwRequestText } from "openclaw/plugin-sdk/reply-runtime";
+ import { resolveTelegramForumThreadId } from "./bot/helpers.js";
+@@ -36,7 +37,13 @@ export function getTelegramSequentialKey(ctx: TelegramSequentialKeyContext): str
+   const chatId = msg?.chat?.id ?? ctx.chat?.id;
+   const rawText = msg?.text ?? msg?.caption;
+   const botUsername = ctx.me?.username;
+-  if (isAbortRequestText(rawText, botUsername ? { botUsername } : undefined)) {
++  const normalizeOptions = botUsername ? { botUsername } : undefined;
++  // PERSONAL BUILD: All control commands (slash commands + abort triggers) bypass the queue
++  // This ensures /status, /model, /reasoning, /help etc. execute immediately
++  if (
++    isAbortRequestText(rawText, normalizeOptions) ||
++    isControlCommandMessage(rawText, undefined, normalizeOptions)
++  ) {
+     if (typeof chatId === "number") {
+       return `telegram:${chatId}:control`;
+     }
+-- 
+2.50.1 (Apple Git-155)
+

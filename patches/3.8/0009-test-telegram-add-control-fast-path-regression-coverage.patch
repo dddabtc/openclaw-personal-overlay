@@ -1,0 +1,33 @@
+From afc4321ed8b191d0c14b7de5d19662a306d467db Mon Sep 17 00:00:00 2001
+From: dda <dda@ddadeMac-mini.local>
+Date: Mon, 23 Mar 2026 10:14:49 -0300
+Subject: [PATCH] test(telegram): add control fast-path regression coverage
+
+---
+ extensions/telegram/src/sequential-key.test.ts | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/extensions/telegram/src/sequential-key.test.ts b/extensions/telegram/src/sequential-key.test.ts
+index d06e1c547a..f2f270a36b 100644
+--- a/extensions/telegram/src/sequential-key.test.ts
++++ b/extensions/telegram/src/sequential-key.test.ts
+@@ -59,7 +59,15 @@ describe("getTelegramSequentialKey", () => {
+       { message: mockMessage({ chat: mockChat({ id: 123 }), text: "/stop" }) },
+       "telegram:123:control",
+     ],
+-    [{ message: mockMessage({ chat: mockChat({ id: 123 }), text: "/status" }) }, "telegram:123"],
++    [{ message: mockMessage({ chat: mockChat({ id: 123 }), text: "/status" }) }, "telegram:123:control"],
++    [{ message: mockMessage({ chat: mockChat({ id: 123 }), text: "/help" }) }, "telegram:123:control"],
++    [
++      {
++        message: mockMessage({ chat: mockChat({ id: 123 }), text: "/status@mybot" }),
++        me: { id: 1, is_bot: true, first_name: "mybot", username: "mybot" },
++      },
++      "telegram:123:control",
++    ],
+     [
+       { message: mockMessage({ chat: mockChat({ id: 123 }), text: "/btw what is the time?" }) },
+       "telegram:123:btw:1",
+-- 
+2.50.1 (Apple Git-155)
+
