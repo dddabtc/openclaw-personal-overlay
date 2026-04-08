@@ -1,34 +1,28 @@
-From 5f16adb1f264d38f230d51e1cc238f6162447bc7 Mon Sep 17 00:00:00 2001
-From: dda <dddabtc@users.noreply.github.com>
-Date: Tue, 31 Mar 2026 22:25:13 -0300
-Subject: [PATCH] feat(subagent): default timeout to 6 hours (21600s)
+From 32e3e0b13688a88abbf2e9ba60ef59c1ae8ad30 Mon Sep 17 00:00:00 2001
+From: subagent-bot <subagent-bot@example.com>
+Date: Sun, 8 Mar 2026 08:13:03 -0300
+Subject: [PATCH 1/1] feat(subagent): default timeout to 6 hours (21600s)
 
+PERSONAL BUILD: Change default subagent timeout from 0 (no timeout) to
+21600 seconds (6 hours), giving complex tasks sufficient time to complete.
+
+Upstream refactor: the inline timeout logic was extracted into
+resolveConfiguredSubagentRunTimeoutSeconds() in subagent-spawn-plan.ts.
+This patch now targets that helper function instead.
 ---
- src/agents/subagent-spawn.ts | 7 ++++---
- 1 file changed, 4 insertions(+), 3 deletions(-)
+ src/agents/subagent-spawn-plan.ts | 1 +
+ 1 file changed, 1 insertion(+)
 
-diff --git a/src/agents/subagent-spawn.ts b/src/agents/subagent-spawn.ts
-index 4c92575eca..d5ea24aad1 100644
---- a/src/agents/subagent-spawn.ts
-+++ b/src/agents/subagent-spawn.ts
-@@ -382,13 +382,14 @@ export async function spawnSubagentDirect(
-   const cfg = loadSubagentConfig();
- 
-   // When agent omits runTimeoutSeconds, use the config default.
--  // Falls back to 0 (no timeout) if config key is also unset,
--  // preserving current behavior for existing deployments.
-+  // Falls back to 21600 (6 hours) if config key is also unset,
-+  // giving complex tasks sufficient time to complete.
-+  const PERSONAL_DEFAULT_SUBAGENT_TIMEOUT_SEC = 21600; // 6 hours
-   const cfgSubagentTimeout =
-     typeof cfg?.agents?.defaults?.subagents?.runTimeoutSeconds === "number" &&
-     Number.isFinite(cfg.agents.defaults.subagents.runTimeoutSeconds)
-       ? Math.max(0, Math.floor(cfg.agents.defaults.subagents.runTimeoutSeconds))
+diff --git a/src/agents/subagent-spawn-plan.ts b/src/agents/subagent-spawn-plan.ts
+index 4ee911aab..2dfd0447f 100644
+--- a/src/agents/subagent-spawn-plan.ts
++++ b/src/agents/subagent-spawn-plan.ts
+@@ -30,7 +30,7 @@ export function resolveConfiguredSubagentRunTimeoutSeconds(params: {
+     typeof params.cfg?.agents?.defaults?.subagents?.runTimeoutSeconds === "number" &&
+     Number.isFinite(params.cfg.agents.defaults.subagents.runTimeoutSeconds)
+       ? Math.max(0, Math.floor(params.cfg.agents.defaults.subagents.runTimeoutSeconds))
 -      : 0;
-+      : PERSONAL_DEFAULT_SUBAGENT_TIMEOUT_SEC;
-   const runTimeoutSeconds =
-     typeof params.runTimeoutSeconds === "number" && Number.isFinite(params.runTimeoutSeconds)
-       ? Math.max(0, Math.floor(params.runTimeoutSeconds))
--- 
-2.25.1
-
++      : 21600;
+   return typeof params.runTimeoutSeconds === "number" && Number.isFinite(params.runTimeoutSeconds)
+     ? Math.max(0, Math.floor(params.runTimeoutSeconds))
+     : cfgSubagentTimeout;
