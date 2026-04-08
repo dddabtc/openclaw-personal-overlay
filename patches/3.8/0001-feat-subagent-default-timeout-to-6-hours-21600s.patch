@@ -1,17 +1,7 @@
 From 32e3e0b13688a88abbf2e9ba60ef59c1ae8ad30 Mon Sep 17 00:00:00 2001
 From: subagent-bot <subagent-bot@example.com>
 Date: Sun, 8 Mar 2026 08:13:03 -0300
-Subject: [PATCH 1/1] feat(subagent): default timeout to 6 hours (21600s)
-
-PERSONAL BUILD: Change default subagent timeout from 0 (no timeout) to
-21600 seconds (6 hours), giving complex tasks sufficient time to complete.
-
-Upstream refactor: the inline timeout logic was extracted into
-resolveConfiguredSubagentRunTimeoutSeconds() in subagent-spawn-plan.ts.
-This patch now targets that helper function instead.
----
- src/agents/subagent-spawn-plan.ts | 1 +
- 1 file changed, 1 insertion(+)
+Subject: [PATCH] feat(subagent): default timeout to 6 hours (21600s)
 
 diff --git a/src/agents/subagent-spawn-plan.ts b/src/agents/subagent-spawn-plan.ts
 index 4ee911aab..2dfd0447f 100644
