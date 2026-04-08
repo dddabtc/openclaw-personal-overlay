@@ -1,0 +1,42 @@
+From 006f1d1134ca49e2a95564beaf68a4f84b721e76 Mon Sep 17 00:00:00 2001
+From: subagent-bot <subagent-bot@example.com>
+Date: Sun, 8 Mar 2026 08:13:23 -0300
+Subject: [PATCH 02/10] feat(status): add PERSONAL BUILD tag to gateway status
+ output
+
+PERSONAL BUILD: Display build date and repo URL at the top of
+'openclaw gateway status' output for easy identification of personal builds.
+---
+ src/cli/daemon-cli/status.print.ts | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/src/cli/daemon-cli/status.print.ts b/src/cli/daemon-cli/status.print.ts
+index 620b13c..9467470 100644
+--- a/src/cli/daemon-cli/status.print.ts
++++ b/src/cli/daemon-cli/status.print.ts
+@@ -50,6 +50,10 @@ function sanitizeDaemonStatusForJson(status: DaemonStatus): DaemonStatus {
+   };
+ }
+ 
++// PERSONAL BUILD metadata injected at build time
++const PERSONAL_BUILD_DATE = "__PERSONAL_BUILD_DATE__";
++const PERSONAL_BUILD_REPO = "https://github.com/dddabtc";
++
+ export function printDaemonStatus(status: DaemonStatus, opts: { json: boolean }) {
+   if (opts.json) {
+     const sanitized = sanitizeDaemonStatusForJson(status);
+@@ -59,6 +63,11 @@ export function printDaemonStatus(status: DaemonStatus, opts: { json: boolean })
+ 
+   const { rich, label, accent, infoText, okText, warnText, errorText } =
+     createCliStatusTextStyles();
++
++  // Print PERSONAL BUILD tag at the top
++  defaultRuntime.log(`🏷 PERSONAL BUILD · ${PERSONAL_BUILD_DATE}(UTC)`);
++  defaultRuntime.log(PERSONAL_BUILD_REPO);
++  defaultRuntime.log("");
+   const spacer = () => defaultRuntime.log("");
+ 
+   const { service, rpc, extraServices } = status;
+-- 
+2.34.1
+

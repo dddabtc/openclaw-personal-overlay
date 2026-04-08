@@ -1,0 +1,33 @@
+From ce2c465edee437e817a0c97a663128d8fd51848f Mon Sep 17 00:00:00 2001
+From: dda <dda@example.com>
+Date: Wed, 8 Apr 2026 09:24:39 +0000
+Subject: [PATCH 10/10] PERSONAL BUILD: update test expectations for 21600
+ default
+
+---
+ ...ls.subagents.sessions-spawn-default-timeout-absent.test.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/agents/openclaw-tools.subagents.sessions-spawn-default-timeout-absent.test.ts b/src/agents/openclaw-tools.subagents.sessions-spawn-default-timeout-absent.test.ts
+index bf32759..7a34fc4 100644
+--- a/src/agents/openclaw-tools.subagents.sessions-spawn-default-timeout-absent.test.ts
++++ b/src/agents/openclaw-tools.subagents.sessions-spawn-default-timeout-absent.test.ts
+@@ -37,13 +37,13 @@ describe("sessions_spawn default runTimeoutSeconds (config absent)", () => {
+     getCallGatewayMock().mockClear();
+   });
+ 
+-  it("falls back to 0 (no timeout) when config key is absent", async () => {
++  it("falls back to 21600 (6 hours) when config key is absent", async () => {
+     configureDefaultsWithoutTimeout();
+     const gateway = setupSessionsSpawnGatewayMock({});
+     const tool = await getSessionsSpawnTool({ agentSessionKey: MAIN_SESSION_KEY });
+ 
+     const result = await tool.execute("call-1", { task: "hello" });
+     expect(result.details).toMatchObject({ status: "accepted" });
+-    expect(readSpawnTimeout(gateway.calls)).toBe(0);
++    expect(readSpawnTimeout(gateway.calls)).toBe(21600);
+   });
+ });
+-- 
+2.34.1
+

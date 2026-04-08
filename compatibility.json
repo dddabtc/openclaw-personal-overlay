@@ -16,18 +16,11 @@
   },
   "supported": [
     {
-      "id": "oc-2026.4.8-personal-overlay",
       "openclawVersion": "2026.4.8",
-      "commitSha": "abe7b2c49da95a47fc0fc01661cec9bfed6941fc",
-      "upstreamBaseCommit": "abe7b2c49da95a47fc0fc01661cec9bfed6941fc",
-      "patchSetDir": "patches/3.8",
-      "binaryArtifact": "dist-overlay.tar.gz",
-      "atlasCompat": {
-        "memory_search": "expected",
-        "memory_get": "expected"
-      },
+      "patchSetDir": "patches/3.9",
       "status": "compatible",
-      "notes": "auto-added by autofix"
+      "upstreamBaseCommit": "b62382aad6ad",
+      "commitSha": "b62382aad6ad"
     },
     {
       "id": "oc-2026.4.5-personal-overlay",
@@ -340,7 +333,7 @@
         "memory_search": "expected",
         "memory_get": "expected"
       },
-      "notes": "Rebased patchset for v2026.3.8, including stale descendant fallback suppression.",
+      "notes": "Rebased patchset for v2026.3.8",
       "status": "supported"
     }
   ],
