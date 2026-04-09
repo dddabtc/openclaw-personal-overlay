@@ -16,6 +16,20 @@
   },
   "supported": [
     {
+      "id": "oc-2026.4.9-personal-overlay",
+      "openclawVersion": "2026.4.9",
+      "commitSha": "0512059dd4e6d2e582393828b837c376ddc4719c",
+      "upstreamBaseCommit": "0512059dd4e6d2e582393828b837c376ddc4719c",
+      "patchSetDir": "patches/3.9",
+      "binaryArtifact": "dist-overlay.tar.gz",
+      "atlasCompat": {
+        "memory_search": "expected",
+        "memory_get": "expected"
+      },
+      "status": "compatible",
+      "notes": "auto-added by autofix"
+    },
+    {
       "openclawVersion": "2026.4.8",
       "patchSetDir": "patches/3.9",
       "status": "compatible",
