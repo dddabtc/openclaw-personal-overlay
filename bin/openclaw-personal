@@ -175,20 +175,21 @@ release_artifact_for_tag() {
   ensure_state_dir
   local out="$STATE_DIR/tmp-artifact-${tag}-$(date +%s).tar.gz"
 
+  local version="${tag#overlay-v}"
+  local url="https://github.com/${repo}/releases/download/overlay-v${version}/dist-overlay.tar.gz"
+
   if command -v gh >/dev/null 2>&1; then
     if gh release download "$tag" \
       --repo "$repo" \
       --pattern "dist-overlay.tar.gz" \
-      --output "$out" >/dev/null; then
+      --output "$out" >/dev/null 2>&1; then
       echo "$out"
       return 0
     fi
-    return 1
+    log "gh release download failed; falling back to curl" >&2
   fi
 
-  local version="${tag#overlay-v}"
-  local url="https://github.com/${repo}/releases/download/overlay-v${version}/dist-overlay.tar.gz"
-  echo "[openclaw-personal] gh not found; downloading artifact via curl: $url" >&2
+  log "downloading artifact via curl: $url" >&2
   if curl -fsSL "$url" -o "$out"; then
     echo "$out"
     return 0
