@@ -1,31 +1,30 @@
-From ce2c465edee437e817a0c97a663128d8fd51848f Mon Sep 17 00:00:00 2001
-From: dda <dda@example.com>
-Date: Wed, 8 Apr 2026 09:24:39 +0000
-Subject: [PATCH 10/10] PERSONAL BUILD: update test expectations for 21600
- default
+From b8f720ec5ee87e0dbdccd27297246fccc8c8a0af Mon Sep 17 00:00:00 2001
+From: dda <dddabtc@users.noreply.github.com>
+Date: Sun, 12 Apr 2026 02:33:01 +0000
+Subject: [PATCH] PERSONAL BUILD: update test expectations for 21600 default
 
 ---
- ...ls.subagents.sessions-spawn-default-timeout-absent.test.ts | 4 ++--
+ .../openclaw-tools.subagents.sessions-spawn.model.test.ts     | 4 ++--
  1 file changed, 2 insertions(+), 2 deletions(-)
 
-diff --git a/src/agents/openclaw-tools.subagents.sessions-spawn-default-timeout-absent.test.ts b/src/agents/openclaw-tools.subagents.sessions-spawn-default-timeout-absent.test.ts
-index bf32759..7a34fc4 100644
---- a/src/agents/openclaw-tools.subagents.sessions-spawn-default-timeout-absent.test.ts
-+++ b/src/agents/openclaw-tools.subagents.sessions-spawn-default-timeout-absent.test.ts
-@@ -37,13 +37,13 @@ describe("sessions_spawn default runTimeoutSeconds (config absent)", () => {
-     getCallGatewayMock().mockClear();
+diff --git a/src/agents/openclaw-tools.subagents.sessions-spawn.model.test.ts b/src/agents/openclaw-tools.subagents.sessions-spawn.model.test.ts
+index 95032df769..b2063ab521 100644
+--- a/src/agents/openclaw-tools.subagents.sessions-spawn.model.test.ts
++++ b/src/agents/openclaw-tools.subagents.sessions-spawn.model.test.ts
+@@ -152,13 +152,13 @@ describe("subagent spawn model + thinking plan", () => {
+     ).toBe(2);
    });
  
--  it("falls back to 0 (no timeout) when config key is absent", async () => {
-+  it("falls back to 21600 (6 hours) when config key is absent", async () => {
-     configureDefaultsWithoutTimeout();
-     const gateway = setupSessionsSpawnGatewayMock({});
-     const tool = await getSessionsSpawnTool({ agentSessionKey: MAIN_SESSION_KEY });
- 
-     const result = await tool.execute("call-1", { task: "hello" });
-     expect(result.details).toMatchObject({ status: "accepted" });
--    expect(readSpawnTimeout(gateway.calls)).toBe(0);
-+    expect(readSpawnTimeout(gateway.calls)).toBe(21600);
+-  it("falls back to 0 when config omits the timeout", () => {
++  it("falls back to 21600 (6 hours) when config omits the timeout", () => {
+     expect(
+       resolveConfiguredSubagentRunTimeoutSeconds({
+         cfg: createConfig({
+           agents: { defaults: { subagents: { maxConcurrent: 8 } } },
+         }),
+       }),
+-    ).toBe(0);
++    ).toBe(21600);
    });
  });
 -- 
