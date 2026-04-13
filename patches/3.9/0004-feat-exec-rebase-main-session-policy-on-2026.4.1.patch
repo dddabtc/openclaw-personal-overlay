@@ -1,7 +1,7 @@
-From 752001dd632c3217831d73ef580b1aca1ec0f435 Mon Sep 17 00:00:00 2001
+From 0197dfa5f40a9beec6a5f65682125188272ac031 Mon Sep 17 00:00:00 2001
 From: dda <dddabtc@users.noreply.github.com>
 Date: Thu, 2 Apr 2026 01:31:11 -0300
-Subject: [PATCH 04/10] feat(exec): rebase main-session policy on 2026.4.1
+Subject: [PATCH] feat(exec): rebase main-session policy on 2026.4.1
 
 ---
  ...h-tools.exec.main-session-defaults.test.ts |  35 ++++++
@@ -14,7 +14,7 @@ Subject: [PATCH 04/10] feat(exec): rebase main-session policy on 2026.4.1
 
 diff --git a/src/agents/bash-tools.exec.main-session-defaults.test.ts b/src/agents/bash-tools.exec.main-session-defaults.test.ts
 new file mode 100644
-index 0000000..18fe973
+index 000000000..18fe97350
 --- /dev/null
 +++ b/src/agents/bash-tools.exec.main-session-defaults.test.ts
 @@ -0,0 +1,35 @@
@@ -54,10 +54,10 @@ index 0000000..18fe973
 +  });
 +});
 diff --git a/src/agents/bash-tools.exec.ts b/src/agents/bash-tools.exec.ts
-index 7e4f2c4..1930f45 100644
+index 76ee948db..b6045aeab 100644
 --- a/src/agents/bash-tools.exec.ts
 +++ b/src/agents/bash-tools.exec.ts
-@@ -44,6 +44,7 @@ import {
+@@ -40,6 +40,7 @@ import {
  } from "./bash-tools.exec-runtime.js";
  import type {
    ExecElevatedDefaults,
@@ -65,7 +65,7 @@ index 7e4f2c4..1930f45 100644
    ExecToolDefaults,
    ExecToolDetails,
  } from "./bash-tools.exec-types.js";
-@@ -63,6 +64,7 @@ import { type AgentToolWithMeta, failedTextResult, textResult } from "./tools/co
+@@ -58,6 +59,7 @@ import { type AgentToolWithMeta, failedTextResult, textResult } from "./tools/co
  export type { BashSandboxConfig } from "./bash-tools.shared.js";
  export type {
    ExecElevatedDefaults,
@@ -73,7 +73,7 @@ index 7e4f2c4..1930f45 100644
    ExecToolDefaults,
    ExecToolDetails,
  } from "./bash-tools.exec-types.js";
-@@ -1003,6 +1005,89 @@ function parseExecApprovalShellCommand(raw: string): ParsedExecApprovalCommand |
+@@ -1046,6 +1048,89 @@ function parseExecApprovalShellCommand(raw: string): ParsedExecApprovalCommand |
    };
  }
  
@@ -163,7 +163,7 @@ index 7e4f2c4..1930f45 100644
  function rejectExecApprovalShellCommand(command: string): void {
    const isEnvAssignmentToken = (token: string): boolean =>
      /^[A-Za-z_][A-Za-z0-9_]*=.*$/u.test(token);
-@@ -1376,11 +1461,23 @@ export function createExecTool(
+@@ -1364,11 +1449,23 @@ export function createExecTool(
          throw new Error("Provide a command to start.");
        }
  
@@ -190,10 +190,10 @@ index 7e4f2c4..1930f45 100644
        if (!allowBackground && (backgroundRequested || yieldRequested)) {
          warnings.push("Warning: background execution is disabled; running synchronously.");
 diff --git a/src/agents/pi-tools.ts b/src/agents/pi-tools.ts
-index 8b0bbe9..534c117 100644
+index 268f56cab..8288cefce 100644
 --- a/src/agents/pi-tools.ts
 +++ b/src/agents/pi-tools.ts
-@@ -204,6 +204,7 @@ function resolveExecConfig(params: { cfg?: OpenClawConfig; agentId?: string }) {
+@@ -200,6 +200,7 @@ function resolveExecConfig(params: { cfg?: OpenClawConfig; agentId?: string }) {
      notifyOnExitEmptySuccess:
        agentExec?.notifyOnExitEmptySuccess ?? globalExec?.notifyOnExitEmptySuccess,
      applyPatch: agentExec?.applyPatch ?? globalExec?.applyPatch,
@@ -201,16 +201,16 @@ index 8b0bbe9..534c117 100644
    };
  }
  
-@@ -502,6 +503,7 @@ export function createOpenClawCodingTools(options?: {
+@@ -498,6 +499,7 @@ export function createOpenClawCodingTools(options?: {
            finalizeExec: sandbox.backend?.finalizeExec?.bind(sandbox.backend),
          }
        : undefined,
 +    mainSessionPolicy: options?.exec?.mainSessionPolicy ?? execConfig.mainSessionPolicy,
    });
-   const processTool = createProcessTool({
+   const processTool = createLazyProcessTool({
      cleanupMs: cleanupMsOverride ?? execConfig.cleanupMs,
 diff --git a/src/config/types.tools.ts b/src/config/types.tools.ts
-index 303eaec..19cc64c 100644
+index f3c5b5512..82e0b9a28 100644
 --- a/src/config/types.tools.ts
 +++ b/src/config/types.tools.ts
 @@ -259,6 +259,19 @@ export type ExecToolConfig = {
@@ -234,10 +234,10 @@ index 303eaec..19cc64c 100644
    backgroundMs?: number;
    /** Default timeout (seconds) before auto-killing exec commands. */
 diff --git a/src/config/zod-schema.agent-runtime.ts b/src/config/zod-schema.agent-runtime.ts
-index e002658..cc8f678 100644
+index eeae09a4d..7b102cb5b 100644
 --- a/src/config/zod-schema.agent-runtime.ts
 +++ b/src/config/zod-schema.agent-runtime.ts
-@@ -429,6 +429,16 @@ const ToolExecSafeBinProfileSchema = z
+@@ -436,6 +436,16 @@ const ToolExecSafeBinProfileSchema = z
    })
    .strict();
  
@@ -254,7 +254,7 @@ index e002658..cc8f678 100644
  const ToolExecBaseShape = {
    host: z.enum(["auto", "sandbox", "gateway", "node"]).optional(),
    security: z.enum(["deny", "allowlist", "full"]).optional(),
-@@ -439,6 +449,7 @@ const ToolExecBaseShape = {
+@@ -446,6 +456,7 @@ const ToolExecBaseShape = {
    strictInlineEval: z.boolean().optional(),
    safeBinTrustedDirs: z.array(z.string()).optional(),
    safeBinProfiles: z.record(z.string(), ToolExecSafeBinProfileSchema).optional(),
