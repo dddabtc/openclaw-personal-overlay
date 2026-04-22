@@ -1,18 +1,17 @@
 From 329fade81fe7e115e207222f8e14d3d159682177 Mon Sep 17 00:00:00 2001
 From: dda <dddabtc@users.noreply.github.com>
 Date: Tue, 14 Apr 2026 20:34:32 +0000
-Subject: [PATCH] feat: slash commands bypass session queue (fast-path control)
+Subject: [PATCH 05/10] feat: slash commands bypass session queue (fast-path control)
 
 ---
  extensions/telegram/src/sequential-key.ts | 36 +++++++++++++++--------
  1 file changed, 23 insertions(+), 13 deletions(-)
 
 diff --git a/extensions/telegram/src/sequential-key.ts b/extensions/telegram/src/sequential-key.ts
-index 650af3fb4..cf3f22307 100644
 --- a/extensions/telegram/src/sequential-key.ts
 +++ b/extensions/telegram/src/sequential-key.ts
 @@ -1,5 +1,6 @@
- import { type Message, type UserFromGetMe } from "@grammyjs/types";
+ import type { Message, UserFromGetMe } from "@grammyjs/types";
  import {
 +  isControlCommandMessage,
    listChatCommands,
@@ -74,6 +73,3 @@ index 650af3fb4..cf3f22307 100644
      if (typeof chatId === "number") {
        return `telegram:${chatId}:control`;
      }
--- 
-2.34.1
-
