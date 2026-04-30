@@ -1,7 +1,7 @@
-From 873325901d4146aefc828201fda82dafdffd6449 Mon Sep 17 00:00:00 2001
+From 5839f2591c30f6e0cf6ee3a75878d833ef11c83b Mon Sep 17 00:00:00 2001
 From: Hermes Cron <hermes@example.invalid>
 Date: Thu, 30 Apr 2026 21:03:52 +0000
-Subject: [PATCH 04/10] feat(exec): rebase main-session policy on 2026.4.27
+Subject: [PATCH] feat(exec): rebase main-session policy on 2026.4.27
 
 ---
  ...h-tools.exec.main-session-defaults.test.ts |  35 ++++++
@@ -54,7 +54,7 @@ index 0000000000..18fe973503
 +  });
 +});
 diff --git a/src/agents/bash-tools.exec.ts b/src/agents/bash-tools.exec.ts
-index 05e93c87c9..a018feccd2 100644
+index 1a3dfd1c31..800173185e 100644
 --- a/src/agents/bash-tools.exec.ts
 +++ b/src/agents/bash-tools.exec.ts
 @@ -47,6 +47,7 @@ import {
@@ -163,13 +163,17 @@ index 05e93c87c9..a018feccd2 100644
  function rejectUnsafeControlShellCommand(command: string): void {
    const isEnvAssignmentToken = (token: string): boolean =>
      /^[A-Za-z_][A-Za-z0-9_]*=.*$/u.test(token);
-@@ -1461,11 +1546,23 @@ export function createExecTool(
+@@ -1461,8 +1546,6 @@ export function createExecTool(
          throw new Error("Provide a command to start.");
        }
  
 -      const maxOutput = DEFAULT_MAX_OUTPUT;
 -      const pendingMaxOutput = DEFAULT_PENDING_MAX_OUTPUT;
        const warnings: string[] = [];
+       const approvalWarningText = normalizeOptionalString(defaults?.approvalWarningText);
+       if (approvalWarningText) {
+@@ -1470,6 +1553,20 @@ export function createExecTool(
+       }
        let execCommandOverride: string | undefined;
        const backgroundRequested = params.background === true;
 +      const { policy: mainSessionPolicy, isMainSession } = enforceMainSessionExecPolicy({
@@ -190,10 +194,10 @@ index 05e93c87c9..a018feccd2 100644
        if (!allowBackground && (backgroundRequested || yieldRequested)) {
          warnings.push("Warning: background execution is disabled; running synchronously.");
 diff --git a/src/agents/pi-tools.ts b/src/agents/pi-tools.ts
-index 30c46aa84c..f845ba28e7 100644
+index cfc721d542..ab893abc1e 100644
 --- a/src/agents/pi-tools.ts
 +++ b/src/agents/pi-tools.ts
-@@ -218,6 +218,7 @@ function resolveExecConfig(params: { cfg?: OpenClawConfig; agentId?: string }) {
+@@ -219,6 +219,7 @@ function resolveExecConfig(params: { cfg?: OpenClawConfig; agentId?: string }) {
      notifyOnExitEmptySuccess:
        agentExec?.notifyOnExitEmptySuccess ?? globalExec?.notifyOnExitEmptySuccess,
      applyPatch: agentExec?.applyPatch ?? globalExec?.applyPatch,
@@ -201,7 +205,7 @@ index 30c46aa84c..f845ba28e7 100644
    };
  }
  
-@@ -535,6 +536,7 @@ export function createOpenClawCodingTools(options?: {
+@@ -549,6 +550,7 @@ export function createOpenClawCodingTools(options?: {
            finalizeExec: sandbox.backend?.finalizeExec?.bind(sandbox.backend),
          }
        : undefined,
@@ -210,10 +214,10 @@ index 30c46aa84c..f845ba28e7 100644
    const processTool = createLazyProcessTool({
      cleanupMs: cleanupMsOverride ?? execConfig.cleanupMs,
 diff --git a/src/config/types.tools.ts b/src/config/types.tools.ts
-index 8c8e0d1105..c945d71ba1 100644
+index 9aae9945e9..c609054167 100644
 --- a/src/config/types.tools.ts
 +++ b/src/config/types.tools.ts
-@@ -261,6 +261,19 @@ export type ExecToolConfig = {
+@@ -265,6 +265,19 @@ export type ExecToolConfig = {
    safeBinTrustedDirs?: string[];
    /** Optional custom safe-bin profiles for entries in tools.exec.safeBins. */
    safeBinProfiles?: Record<string, SafeBinProfileFixture>;
@@ -234,10 +238,10 @@ index 8c8e0d1105..c945d71ba1 100644
    backgroundMs?: number;
    /** Default timeout (seconds) before auto-killing exec commands. */
 diff --git a/src/config/zod-schema.agent-runtime.ts b/src/config/zod-schema.agent-runtime.ts
-index 5783791020..d747be4a88 100644
+index 04368f09ed..38969b664d 100644
 --- a/src/config/zod-schema.agent-runtime.ts
 +++ b/src/config/zod-schema.agent-runtime.ts
-@@ -455,6 +455,16 @@ const ToolExecSafeBinProfileSchema = z
+@@ -457,6 +457,16 @@ const ToolExecSafeBinProfileSchema = z
    })
    .strict();
  
@@ -254,7 +258,7 @@ index 5783791020..d747be4a88 100644
  const ToolExecBaseShape = {
    host: z.enum(["auto", "sandbox", "gateway", "node"]).optional(),
    security: z.enum(["deny", "allowlist", "full"]).optional(),
-@@ -465,6 +475,7 @@ const ToolExecBaseShape = {
+@@ -467,6 +477,7 @@ const ToolExecBaseShape = {
    strictInlineEval: z.boolean().optional(),
    safeBinTrustedDirs: z.array(z.string()).optional(),
    safeBinProfiles: z.record(z.string(), ToolExecSafeBinProfileSchema).optional(),
