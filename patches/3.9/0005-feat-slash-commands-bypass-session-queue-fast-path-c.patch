@@ -1,23 +1,26 @@
-From 329fade81fe7e115e207222f8e14d3d159682177 Mon Sep 17 00:00:00 2001
+From 364ca6ea06ed19044639286b55f162f7a535d459 Mon Sep 17 00:00:00 2001
 From: dda <dddabtc@users.noreply.github.com>
 Date: Tue, 14 Apr 2026 20:34:32 +0000
-Subject: [PATCH 05/10] feat: slash commands bypass session queue (fast-path control)
+Subject: [PATCH 05/10] feat: slash commands bypass session queue (fast-path
+ control)
 
 ---
  extensions/telegram/src/sequential-key.ts | 36 +++++++++++++++--------
  1 file changed, 23 insertions(+), 13 deletions(-)
 
 diff --git a/extensions/telegram/src/sequential-key.ts b/extensions/telegram/src/sequential-key.ts
+index 0d78e3c6b4..a54fe7e80c 100644
 --- a/extensions/telegram/src/sequential-key.ts
 +++ b/extensions/telegram/src/sequential-key.ts
-@@ -1,5 +1,6 @@
+@@ -1,6 +1,7 @@
  import type { Message, UserFromGetMe } from "@grammyjs/types";
+ import { parseExecApprovalCommandText } from "openclaw/plugin-sdk/approval-reply-runtime";
  import {
 +  isControlCommandMessage,
    listChatCommands,
    maybeResolveTextAlias,
    normalizeCommandBody,
-@@ -25,17 +26,15 @@ export type TelegramSequentialKeyContext = {
+@@ -27,17 +28,15 @@ export type TelegramSequentialKeyContext = {
    };
  };
  
@@ -44,7 +47,7 @@ diff --git a/extensions/telegram/src/sequential-key.ts b/extensions/telegram/src
    const alias = maybeResolveTextAlias(normalizedBody);
    if (!alias) {
      return false;
-@@ -43,7 +42,18 @@ function resolveStatusCommandControlLane(params: {
+@@ -45,7 +44,18 @@ function resolveStatusCommandControlLane(params: {
    const command = listChatCommands().find((entry) =>
      entry.textAliases.some((candidate) => candidate.trim().toLowerCase() === alias),
    );
@@ -64,7 +67,7 @@ diff --git a/extensions/telegram/src/sequential-key.ts b/extensions/telegram/src
  }
  
  export function getTelegramSequentialKey(ctx: TelegramSequentialKeyContext): string {
-@@ -69,7 +79,7 @@ export function getTelegramSequentialKey(ctx: TelegramSequentialKeyContext): str
+@@ -71,7 +81,7 @@ export function getTelegramSequentialKey(ctx: TelegramSequentialKeyContext): str
      }
      return "telegram:control";
    }
