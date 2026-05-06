@@ -1,16 +1,17 @@
-From d50f739cbd93e590786694ceb4200f41f749ff38 Mon Sep 17 00:00:00 2001
-From: subagent-bot <subagent-bot@example.com>
-Date: Wed, 1 Apr 2026 22:40:00 -0300
-Subject: [PATCH 09/10] fix(status): restore chat PERSONAL BUILD tag
+From 558d6858cf79b78f46a7cb901263d56530eb2162 Mon Sep 17 00:00:00 2001
+From: Hermes Overlay Repair <hermes@example.com>
+Date: Wed, 6 May 2026 13:34:08 +0000
+Subject: [PATCH] fix(status): restore chat PERSONAL BUILD tag
 
 ---
- src/status/status-message.ts | 8 ++++++++
- 1 file changed, 8 insertions(+)
+ src/status/status-message.ts | 6 ++++++
+ 1 file changed, 6 insertions(+)
 
 diff --git a/src/status/status-message.ts b/src/status/status-message.ts
+index 0addfcb040..ee758ceee2 100644
 --- a/src/status/status-message.ts
 +++ b/src/status/status-message.ts
-@@ -826,8 +826,13 @@ export function buildStatusMessage(args: StatusArgs): string {
+@@ -903,8 +903,13 @@ export function buildStatusMessage(args: StatusArgs): string {
          showFallbackAuth ? ` · 🔑 ${activeAuthLabelValue}` : ""
        } (${fallbackState.reason ?? "selected model unavailable"})`
      : null;
@@ -24,11 +25,14 @@ diff --git a/src/status/status-message.ts b/src/status/status-message.ts
    const usagePair = formatUsagePair(inputTokens, outputTokens);
    const cacheLine = formatCacheLine(inputTokens, cacheRead, cacheWrite);
    const costLine = costLabel ? `💵 Cost: ${costLabel}` : null;
-@@ -838,6 +843,7 @@ export function buildStatusMessage(args: StatusArgs): string {
+@@ -915,6 +920,7 @@ export function buildStatusMessage(args: StatusArgs): string {
  
    return [
      versionLine,
 +    personalBuildLine,
      args.timeLine,
+     args.uptimeLine,
      modelLine,
-     configuredFallbacksLine,
+-- 
+2.34.1
+
