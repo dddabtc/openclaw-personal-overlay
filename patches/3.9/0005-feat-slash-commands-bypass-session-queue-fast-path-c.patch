@@ -1,79 +1,59 @@
-From 31c99124edc46d6da3982362f87cb81eed74dc5d Mon Sep 17 00:00:00 2001
+From ed7f721be2ec5b2aac3036b7058d2848449c58e4 Mon Sep 17 00:00:00 2001
 From: dda <dddabtc@users.noreply.github.com>
-Date: Tue, 14 Apr 2026 20:34:32 +0000
-Subject: [PATCH] feat: slash commands bypass session queue (fast-path control)
+Date: Wed, 20 May 2026 08:46:05 -0300
+Subject: [PATCH 05/10] feat: slash commands bypass session queue (fast-path
+ control)
 
 ---
- extensions/telegram/src/sequential-key.ts | 36 +++++++++++++++--------
- 1 file changed, 23 insertions(+), 13 deletions(-)
+ extensions/telegram/src/sequential-key.ts | 21 ++++++++++++++++++++-
+ 1 file changed, 20 insertions(+), 1 deletion(-)
 
 diff --git a/extensions/telegram/src/sequential-key.ts b/extensions/telegram/src/sequential-key.ts
-index 898d0d29f8..01dd8c5e51 100644
+index 6f5e1495c2..d4afb417ba 100644
 --- a/extensions/telegram/src/sequential-key.ts
 +++ b/extensions/telegram/src/sequential-key.ts
-@@ -1,5 +1,6 @@
- import type { Message, UserFromGetMe } from "@grammyjs/types";
- import { parseExecApprovalCommandText } from "openclaw/plugin-sdk/approval-reply-runtime";
+@@ -5,6 +5,7 @@ import {
+   maybeResolveTextAlias,
+   normalizeCommandBody,
+ } from "openclaw/plugin-sdk/command-auth-native";
 +import { isControlCommandMessage } from "openclaw/plugin-sdk/command-detection";
  import {
-   listChatCommands,
-   maybeResolveTextAlias,
-@@ -28,17 +29,15 @@ type TelegramSequentialKeyContext = {
-   };
- };
+   isAbortRequestText,
+   isBtwRequestText,
+@@ -21,6 +22,8 @@ const TELEGRAM_READ_ONLY_STATUS_COMMAND_KEYS = new Set([
+   "whoami",
+ ]);
  
--function resolveStatusCommandControlLane(params: {
--  rawText?: string;
--  botUsername?: string;
--}): boolean {
--  // Only read-only status commands should bypass the per-topic lane. Commands
--  // like /export-session stay on the normal lane because they materialize
--  // session state to disk and should not interleave with an active turn.
--  const normalizedBody = normalizeCommandBody(
--    params.rawText?.trim() ?? "",
--    params.botUsername ? { botUsername: params.botUsername } : undefined,
--  );
-+function resolveCommandControlLane(params: { rawText?: string; botUsername?: string }): boolean {
-+  // PERSONAL BUILD: chat control commands should bypass the per-topic lane so
-+  // users can inspect or adjust session behavior while a long turn is running.
-+  // Keep materializing/export and tool-execution commands on the normal lane.
++const TELEGRAM_PERSONAL_CONTROL_LANE_KEYS = new Set(["model", "reasoning", "session"]);
++
+ type TelegramSequentialKeyContext = {
+   chat?: { id?: number };
+   me?: UserFromGetMe;
+@@ -91,7 +94,23 @@ export function isTelegramControlLaneText(params: {
+   if (isTelegramTargetedStopCommand(params.rawText, params.botUsername)) {
+     return true;
+   }
+-  return isTelegramReadOnlyControlLaneText(params);
++  if (isTelegramReadOnlyControlLaneText(params)) {
++    return true;
++  }
 +  const normalizeOptions = params.botUsername ? { botUsername: params.botUsername } : undefined;
-+  if (!isControlCommandMessage(params.rawText?.trim() ?? "", undefined, normalizeOptions)) {
++  const trimmed = params.rawText?.trim() ?? "";
++  if (!isControlCommandMessage(trimmed, undefined, normalizeOptions)) {
 +    return false;
 +  }
-+  const normalizedBody = normalizeCommandBody(params.rawText?.trim() ?? "", normalizeOptions);
-   const alias = maybeResolveTextAlias(normalizedBody);
-   if (!alias) {
-     return false;
-@@ -46,7 +45,18 @@ function resolveStatusCommandControlLane(params: {
-   const command = listChatCommands().find((entry) =>
-     entry.textAliases.some((candidate) => candidate.trim().toLowerCase() === alias),
-   );
--  return command?.category === "status" && command.key !== "export-session";
-+  if (!command) {
++  const normalizedBody = normalizeCommandBody(trimmed, normalizeOptions);
++  const alias = maybeResolveTextAlias(normalizedBody);
++  if (!alias) {
 +    return false;
 +  }
-+  return ![
-+    "approve",
-+    "allowlist",
-+    "btw",
-+    "export-session",
-+    "skill",
-+    "subagents",
-+    "tts",
-+  ].includes(command.key);
++  const command = listChatCommands().find((entry) =>
++    entry.textAliases.some((candidate) => candidate.trim().toLowerCase() === alias),
++  );
++  return !!command && TELEGRAM_PERSONAL_CONTROL_LANE_KEYS.has(command.key);
  }
  
  export function getTelegramSequentialKey(ctx: TelegramSequentialKeyContext): string {
-@@ -73,7 +83,7 @@ export function getTelegramSequentialKey(ctx: TelegramSequentialKeyContext): str
-     }
-     return "telegram:control";
-   }
--  if (resolveStatusCommandControlLane({ rawText, botUsername })) {
-+  if (resolveCommandControlLane({ rawText, botUsername })) {
-     if (typeof chatId === "number") {
-       return `telegram:${chatId}:control`;
-     }
 -- 
-2.34.1
+2.25.1
 
