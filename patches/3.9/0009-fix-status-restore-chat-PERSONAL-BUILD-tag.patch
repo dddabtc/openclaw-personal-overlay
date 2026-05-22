@@ -1,4 +1,4 @@
-From 558d6858cf79b78f46a7cb901263d56530eb2162 Mon Sep 17 00:00:00 2001
+From 1a005b9b633b63f9760561e1af978f22cd296679 Mon Sep 17 00:00:00 2001
 From: Hermes Overlay Repair <hermes@example.com>
 Date: Wed, 6 May 2026 13:34:08 +0000
 Subject: [PATCH] fix(status): restore chat PERSONAL BUILD tag
@@ -8,10 +8,10 @@ Subject: [PATCH] fix(status): restore chat PERSONAL BUILD tag
  1 file changed, 6 insertions(+)
 
 diff --git a/src/status/status-message.ts b/src/status/status-message.ts
-index 0addfcb040..ee758ceee2 100644
+index 50d698a263..6e8185b63f 100644
 --- a/src/status/status-message.ts
 +++ b/src/status/status-message.ts
-@@ -903,8 +903,13 @@ export function buildStatusMessage(args: StatusArgs): string {
+@@ -961,8 +961,13 @@ export function buildStatusMessage(args: StatusArgs): string {
          showFallbackAuth ? ` · 🔑 ${activeAuthLabelValue}` : ""
        } (${fallbackState.reason ?? "selected model unavailable"})`
      : null;
@@ -25,14 +25,13 @@ index 0addfcb040..ee758ceee2 100644
    const usagePair = formatUsagePair(inputTokens, outputTokens);
    const cacheLine = formatCacheLine(inputTokens, cacheRead, cacheWrite);
    const costLine = costLabel ? `💵 Cost: ${costLabel}` : null;
-@@ -915,6 +920,7 @@ export function buildStatusMessage(args: StatusArgs): string {
+@@ -973,6 +978,7 @@ export function buildStatusMessage(args: StatusArgs): string {
  
    return [
      versionLine,
 +    personalBuildLine,
      args.timeLine,
      args.uptimeLine,
-     modelLine,
+     ...modelLines,
 -- 
-2.34.1
-
+2.25.1
