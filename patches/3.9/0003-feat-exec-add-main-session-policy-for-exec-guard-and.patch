@@ -9,12 +9,13 @@ Subject: [PATCH] feat(exec): add main session policy for exec guard and SSH
  1 file changed, 19 insertions(+)
 
 diff --git a/src/agents/bash-tools.exec-types.ts b/src/agents/bash-tools.exec-types.ts
-index e834457f1..ebe7f4d95 100644
+index dc24a0acc4..29477f959e 100644
 --- a/src/agents/bash-tools.exec-types.ts
 +++ b/src/agents/bash-tools.exec-types.ts
-@@ -1,5 +1,22 @@
- import type { ExecApprovalDecision } from "../infra/exec-approvals.js";
- import type { ExecAsk, ExecHost, ExecSecurity, ExecTarget } from "../infra/exec-approvals.js";
+@@ -3,6 +3,23 @@ import type { ExecAsk, ExecHost, ExecSecurity, ExecTarget } from "../infra/exec-
+ import type { SafeBinProfileFixture } from "../infra/exec-safe-bin-policy.js";
+ import type { BashSandboxConfig } from "./bash-tools.shared.js";
+ import type { EmbeddedFullAccessBlockedReason } from "./pi-embedded-runner/types.js";
 +
 +/**
 + * PERSONAL BUILD: Main session execution policy.
@@ -32,10 +33,10 @@ index e834457f1..ebe7f4d95 100644
 +  /** Maximum output bytes for main session (default: 50KB = 51200). */
 +  maxOutputBytes?: number;
 +};
- import type { SafeBinProfileFixture } from "../infra/exec-safe-bin-policy.js";
- import type { BashSandboxConfig } from "./bash-tools.shared.js";
- import type { EmbeddedFullAccessBlockedReason } from "./pi-embedded-runner/types.js";
-@@ -31,6 +48,8 @@ export type ExecToolDefaults = {
+ 
+ export type ExecToolDefaults = {
+   hasCronTool?: boolean;
+@@ -47,6 +64,8 @@ export type ExecToolDefaults = {
    accountId?: string;
    notifyOnExit?: boolean;
    notifyOnExitEmptySuccess?: boolean;
