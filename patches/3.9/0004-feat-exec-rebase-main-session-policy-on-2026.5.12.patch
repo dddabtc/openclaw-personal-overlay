@@ -1,22 +1,22 @@
-From 9382122d02a214c12ef934a7808cdc937509a050 Mon Sep 17 00:00:00 2001
+From 13f665d007fe89d0a6b52ab467dc484dbe883990 Mon Sep 17 00:00:00 2001
 From: Hermes Cron <hermes@example.invalid>
-Date: Sat, 30 May 2026 22:35:54 -0300
-Subject: [PATCH] feat(exec): rebase main-session policy on 2026.5.12
+Date: Thu, 25 Jun 2026 00:53:53 -0300
+Subject: [PATCH 04/10] feat(exec): rebase main-session policy on 2026.5.12
 
 ---
  src/agents/agent-tools.ts                     |   2 +
  ...h-tools.exec.main-session-defaults.test.ts |  35 ++++++
- src/agents/bash-tools.exec.ts                 | 107 +++++++++++++++++-
+ src/agents/bash-tools.exec.ts                 | 110 +++++++++++++++++-
  src/config/types.tools.ts                     |  13 +++
  src/config/zod-schema.agent-runtime.ts        |  11 ++
- 5 files changed, 165 insertions(+), 3 deletions(-)
+ 5 files changed, 168 insertions(+), 3 deletions(-)
  create mode 100644 src/agents/bash-tools.exec.main-session-defaults.test.ts
 
 diff --git a/src/agents/agent-tools.ts b/src/agents/agent-tools.ts
-index 68f4b852ca..f1bd41bb3c 100644
+index 919d53095c..760c3c084a 100644
 --- a/src/agents/agent-tools.ts
 +++ b/src/agents/agent-tools.ts
-@@ -360,6 +360,7 @@ function resolveExecConfig(params: { cfg?: OpenClawConfig; agentId?: string }) {
+@@ -402,6 +402,7 @@ function resolveExecConfig(params: { cfg?: OpenClawConfig; agentId?: string }) {
      notifyOnExitEmptySuccess:
        agentExec?.notifyOnExitEmptySuccess ?? globalExec?.notifyOnExitEmptySuccess,
      applyPatch: agentExec?.applyPatch ?? globalExec?.applyPatch,
@@ -24,7 +24,7 @@ index 68f4b852ca..f1bd41bb3c 100644
    };
  }
  
-@@ -808,6 +809,7 @@ export function createOpenClawCodingTools(options?: {
+@@ -876,6 +877,7 @@ export function createOpenClawCodingTools(options?: {
          notifyOnExit: options?.exec?.notifyOnExit ?? execConfig.notifyOnExit,
          notifyOnExitEmptySuccess:
            options?.exec?.notifyOnExitEmptySuccess ?? execConfig.notifyOnExitEmptySuccess,
@@ -74,10 +74,10 @@ index 0000000000..18fe973503
 +  });
 +});
 diff --git a/src/agents/bash-tools.exec.ts b/src/agents/bash-tools.exec.ts
-index 5d9460f963..afd3e3aed5 100644
+index 36fea04ea1..ee06b85406 100644
 --- a/src/agents/bash-tools.exec.ts
 +++ b/src/agents/bash-tools.exec.ts
-@@ -54,7 +54,11 @@ import {
+@@ -70,7 +70,11 @@ import {
    runExecProcess,
    execSchema,
  } from "./bash-tools.exec-runtime.js";
@@ -90,7 +90,7 @@ index 5d9460f963..afd3e3aed5 100644
  import {
    buildSandboxEnv,
    clampWithDefault,
-@@ -72,6 +76,7 @@ import { type AgentToolWithMeta, failedTextResult, textResult } from "./tools/co
+@@ -88,6 +92,7 @@ import { type AgentToolWithMeta, failedTextResult, textResult } from "./tools/co
  export type { BashSandboxConfig } from "./bash-tools.shared.js";
  export type {
    ExecElevatedDefaults,
@@ -98,11 +98,44 @@ index 5d9460f963..afd3e3aed5 100644
    ExecToolDefaults,
    ExecToolDetails,
  } from "./bash-tools.exec-types.js";
-@@ -1194,6 +1199,90 @@ function parseOpenClawChannelsLoginShellCommand(raw: string): boolean {
-   );
- }
+@@ -1385,8 +1390,6 @@ export function createExecTool(
+         throw new Error("Provide a command to start.");
+       }
+ 
+-      const maxOutput = DEFAULT_MAX_OUTPUT;
+-      const pendingMaxOutput = DEFAULT_PENDING_MAX_OUTPUT;
+       const warnings: string[] = [];
+       const approvalWarningText = normalizeOptionalString(defaults?.approvalWarningText);
+       if (approvalWarningText) {
+@@ -1394,6 +1397,20 @@ export function createExecTool(
+       }
+       let execCommandOverride: string | undefined;
+       const backgroundRequested = params.background === true;
++      const { policy: mainSessionPolicy, isMainSession } = enforceMainSessionExecPolicy({
++        sessionKey: defaults?.sessionKey,
++        policy: defaults?.mainSessionPolicy,
++        command: params.command,
++        timeout: params.timeout,
++        backgroundRequested,
++      });
++      const mainSessionOutputCap = isMainSession ? mainSessionPolicy.maxOutputBytes : undefined;
++      const maxOutput = mainSessionOutputCap
++        ? Math.min(DEFAULT_MAX_OUTPUT, mainSessionOutputCap)
++        : DEFAULT_MAX_OUTPUT;
++      const pendingMaxOutput = mainSessionOutputCap
++        ? Math.min(DEFAULT_PENDING_MAX_OUTPUT, mainSessionOutputCap)
++        : DEFAULT_PENDING_MAX_OUTPUT;
+       const yieldRequested = typeof params.yieldMs === "number";
+       if (!allowBackground && (backgroundRequested || yieldRequested)) {
+         warnings.push("Warning: background execution is disabled; running synchronously.");
+@@ -1883,6 +1900,93 @@ export function createExecTool(
+ /** Default exec tool instance used by agent tool registries. */
+ export const execTool = createExecTool();
  
 +
++/**
++ * PERSONAL BUILD: Main session exec policy defaults.
++ */
 +const PERSONAL_MAIN_SESSION_POLICY_DEFAULTS: Required<
 +  Pick<
 +    ExecMainSessionPolicy,
@@ -186,44 +219,14 @@ index 5d9460f963..afd3e3aed5 100644
 +  return { policy, isMainSession };
 +}
 +
- function rejectUnsafeControlShellCommand(command: string): void {
-   const rawCommand = command.trim();
-   const analysis = analyzeShellCommand({ command: rawCommand });
-@@ -1327,8 +1416,6 @@ export function createExecTool(
-         throw new Error("Provide a command to start.");
-       }
- 
--      const maxOutput = DEFAULT_MAX_OUTPUT;
--      const pendingMaxOutput = DEFAULT_PENDING_MAX_OUTPUT;
-       const warnings: string[] = [];
-       const approvalWarningText = normalizeOptionalString(defaults?.approvalWarningText);
-       if (approvalWarningText) {
-@@ -1336,6 +1423,20 @@ export function createExecTool(
-       }
-       let execCommandOverride: string | undefined;
-       const backgroundRequested = params.background === true;
-+      const { policy: mainSessionPolicy, isMainSession } = enforceMainSessionExecPolicy({
-+        sessionKey: defaults?.sessionKey,
-+        policy: defaults?.mainSessionPolicy,
-+        command: params.command,
-+        timeout: params.timeout,
-+        backgroundRequested,
-+      });
-+      const mainSessionOutputCap = isMainSession ? mainSessionPolicy.maxOutputBytes : undefined;
-+      const maxOutput = mainSessionOutputCap
-+        ? Math.min(DEFAULT_MAX_OUTPUT, mainSessionOutputCap)
-+        : DEFAULT_MAX_OUTPUT;
-+      const pendingMaxOutput = mainSessionOutputCap
-+        ? Math.min(DEFAULT_PENDING_MAX_OUTPUT, mainSessionOutputCap)
-+        : DEFAULT_PENDING_MAX_OUTPUT;
-       const yieldRequested = typeof params.yieldMs === "number";
-       if (!allowBackground && (backgroundRequested || yieldRequested)) {
-         warnings.push("Warning: background execution is disabled; running synchronously.");
+ /** Test-only seams for parser/preflight helpers. */
+ export const testing = {
+   parseOpenClawChannelsLoginShellCommand,
 diff --git a/src/config/types.tools.ts b/src/config/types.tools.ts
-index b11c387658..c52ccada75 100644
+index 0df237cf92..6a632ad882 100644
 --- a/src/config/types.tools.ts
 +++ b/src/config/types.tools.ts
-@@ -322,6 +322,19 @@ export type ExecToolConfig = {
+@@ -337,6 +337,19 @@ export type ExecToolConfig = {
    safeBinTrustedDirs?: string[];
    /** Optional custom safe-bin profiles for entries in tools.exec.safeBins. */
    safeBinProfiles?: Record<string, SafeBinProfileFixture>;
@@ -244,10 +247,10 @@ index b11c387658..c52ccada75 100644
    reviewer?: {
      /** Optional reviewer model override (provider/model or agent model config). */
 diff --git a/src/config/zod-schema.agent-runtime.ts b/src/config/zod-schema.agent-runtime.ts
-index 1b5ce78331..f9f125cf88 100644
+index 3ad4b14270..43253f7646 100644
 --- a/src/config/zod-schema.agent-runtime.ts
 +++ b/src/config/zod-schema.agent-runtime.ts
-@@ -551,6 +551,16 @@ const ToolExecSafeBinProfileSchema = z
+@@ -552,6 +552,16 @@ const ToolExecSafeBinProfileSchema = z
    })
    .strict();
  
@@ -264,7 +267,7 @@ index 1b5ce78331..f9f125cf88 100644
  const ToolExecBaseShape = {
    host: z.enum(["auto", "sandbox", "gateway", "node"]).optional(),
    mode: z.enum(["deny", "allowlist", "ask", "auto", "full"]).optional(),
-@@ -563,6 +573,7 @@ const ToolExecBaseShape = {
+@@ -564,6 +574,7 @@ const ToolExecBaseShape = {
    commandHighlighting: z.boolean().optional(),
    safeBinTrustedDirs: z.array(z.string()).optional(),
    safeBinProfiles: z.record(z.string(), ToolExecSafeBinProfileSchema).optional(),
