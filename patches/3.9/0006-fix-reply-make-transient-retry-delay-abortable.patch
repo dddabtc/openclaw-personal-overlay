@@ -1,4 +1,4 @@
-From d2d71dcd371e1db5eab8dbe164db5138017940d6 Mon Sep 17 00:00:00 2001
+From 6aef0b418a052484449953648f2d911ee8856e6b Mon Sep 17 00:00:00 2001
 From: Hermes Cron <hermes@example.invalid>
 Date: Thu, 25 Jun 2026 00:55:09 -0300
 Subject: [PATCH 06/10] fix(reply): make transient retry delay abortable
@@ -8,7 +8,7 @@ Subject: [PATCH 06/10] fix(reply): make transient retry delay abortable
  1 file changed, 9 insertions(+), 4 deletions(-)
 
 diff --git a/src/auto-reply/reply/agent-runner-execution.ts b/src/auto-reply/reply/agent-runner-execution.ts
-index d075f7686a..c89e65a94b 100644
+index 42f2089d..4f1dcfa5 100644
 --- a/src/auto-reply/reply/agent-runner-execution.ts
 +++ b/src/auto-reply/reply/agent-runner-execution.ts
 @@ -1,5 +1,6 @@
@@ -18,7 +18,7 @@ index d075f7686a..c89e65a94b 100644
  import {
    hasNonEmptyString,
    normalizeLowercaseStringOrEmpty,
-@@ -3194,10 +3195,14 @@ export async function runAgentTurnWithFallback(params: {
+@@ -3212,10 +3213,14 @@ export async function runAgentTurnWithFallback(params: {
          defaultRuntime.error(
            `Transient HTTP provider error before reply (${message}). Retrying once in ${TRANSIENT_HTTP_RETRY_DELAY_MS}ms.`,
          );

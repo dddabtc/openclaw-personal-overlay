@@ -1,4 +1,4 @@
-From 13f665d007fe89d0a6b52ab467dc484dbe883990 Mon Sep 17 00:00:00 2001
+From 4f91f69e73dabbc25328d7cf8181fea96b634d85 Mon Sep 17 00:00:00 2001
 From: Hermes Cron <hermes@example.invalid>
 Date: Thu, 25 Jun 2026 00:53:53 -0300
 Subject: [PATCH 04/10] feat(exec): rebase main-session policy on 2026.5.12
@@ -13,10 +13,10 @@ Subject: [PATCH 04/10] feat(exec): rebase main-session policy on 2026.5.12
  create mode 100644 src/agents/bash-tools.exec.main-session-defaults.test.ts
 
 diff --git a/src/agents/agent-tools.ts b/src/agents/agent-tools.ts
-index 919d53095c..760c3c084a 100644
+index ea94f258..c6829d28 100644
 --- a/src/agents/agent-tools.ts
 +++ b/src/agents/agent-tools.ts
-@@ -402,6 +402,7 @@ function resolveExecConfig(params: { cfg?: OpenClawConfig; agentId?: string }) {
+@@ -369,6 +369,7 @@ function resolveExecConfig(params: { cfg?: OpenClawConfig; agentId?: string }) {
      notifyOnExitEmptySuccess:
        agentExec?.notifyOnExitEmptySuccess ?? globalExec?.notifyOnExitEmptySuccess,
      applyPatch: agentExec?.applyPatch ?? globalExec?.applyPatch,
@@ -24,7 +24,7 @@ index 919d53095c..760c3c084a 100644
    };
  }
  
-@@ -876,6 +877,7 @@ export function createOpenClawCodingTools(options?: {
+@@ -849,6 +850,7 @@ export function createOpenClawCodingTools(options?: {
          notifyOnExit: options?.exec?.notifyOnExit ?? execConfig.notifyOnExit,
          notifyOnExitEmptySuccess:
            options?.exec?.notifyOnExitEmptySuccess ?? execConfig.notifyOnExitEmptySuccess,
@@ -34,7 +34,7 @@ index 919d53095c..760c3c084a 100644
                containerName: sandbox.containerName,
 diff --git a/src/agents/bash-tools.exec.main-session-defaults.test.ts b/src/agents/bash-tools.exec.main-session-defaults.test.ts
 new file mode 100644
-index 0000000000..18fe973503
+index 00000000..18fe9735
 --- /dev/null
 +++ b/src/agents/bash-tools.exec.main-session-defaults.test.ts
 @@ -0,0 +1,35 @@
@@ -74,10 +74,10 @@ index 0000000000..18fe973503
 +  });
 +});
 diff --git a/src/agents/bash-tools.exec.ts b/src/agents/bash-tools.exec.ts
-index 36fea04ea1..ee06b85406 100644
+index 664c5932..c226218e 100644
 --- a/src/agents/bash-tools.exec.ts
 +++ b/src/agents/bash-tools.exec.ts
-@@ -70,7 +70,11 @@ import {
+@@ -72,7 +72,11 @@ import {
    runExecProcess,
    execSchema,
  } from "./bash-tools.exec-runtime.js";
@@ -90,7 +90,7 @@ index 36fea04ea1..ee06b85406 100644
  import {
    buildSandboxEnv,
    clampWithDefault,
-@@ -88,6 +92,7 @@ import { type AgentToolWithMeta, failedTextResult, textResult } from "./tools/co
+@@ -90,6 +94,7 @@ import { type AgentToolWithMeta, failedTextResult, textResult } from "./tools/co
  export type { BashSandboxConfig } from "./bash-tools.shared.js";
  export type {
    ExecElevatedDefaults,
@@ -98,7 +98,7 @@ index 36fea04ea1..ee06b85406 100644
    ExecToolDefaults,
    ExecToolDetails,
  } from "./bash-tools.exec-types.js";
-@@ -1385,8 +1390,6 @@ export function createExecTool(
+@@ -1413,8 +1418,6 @@ export function createExecTool(
          throw new Error("Provide a command to start.");
        }
  
@@ -107,7 +107,7 @@ index 36fea04ea1..ee06b85406 100644
        const warnings: string[] = [];
        const approvalWarningText = normalizeOptionalString(defaults?.approvalWarningText);
        if (approvalWarningText) {
-@@ -1394,6 +1397,20 @@ export function createExecTool(
+@@ -1422,6 +1425,20 @@ export function createExecTool(
        }
        let execCommandOverride: string | undefined;
        const backgroundRequested = params.background === true;
@@ -128,7 +128,7 @@ index 36fea04ea1..ee06b85406 100644
        const yieldRequested = typeof params.yieldMs === "number";
        if (!allowBackground && (backgroundRequested || yieldRequested)) {
          warnings.push("Warning: background execution is disabled; running synchronously.");
-@@ -1883,6 +1900,93 @@ export function createExecTool(
+@@ -1917,6 +1934,93 @@ export function createExecTool(
  /** Default exec tool instance used by agent tool registries. */
  export const execTool = createExecTool();
  
@@ -223,7 +223,7 @@ index 36fea04ea1..ee06b85406 100644
  export const testing = {
    parseOpenClawChannelsLoginShellCommand,
 diff --git a/src/config/types.tools.ts b/src/config/types.tools.ts
-index 0df237cf92..6a632ad882 100644
+index 0df237cf..6a632ad8 100644
 --- a/src/config/types.tools.ts
 +++ b/src/config/types.tools.ts
 @@ -337,6 +337,19 @@ export type ExecToolConfig = {
@@ -247,7 +247,7 @@ index 0df237cf92..6a632ad882 100644
    reviewer?: {
      /** Optional reviewer model override (provider/model or agent model config). */
 diff --git a/src/config/zod-schema.agent-runtime.ts b/src/config/zod-schema.agent-runtime.ts
-index 3ad4b14270..43253f7646 100644
+index b794950e..9158ddb7 100644
 --- a/src/config/zod-schema.agent-runtime.ts
 +++ b/src/config/zod-schema.agent-runtime.ts
 @@ -552,6 +552,16 @@ const ToolExecSafeBinProfileSchema = z

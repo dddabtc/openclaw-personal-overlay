@@ -1,17 +1,17 @@
-From b8f720ec5ee87e0dbdccd27297246fccc8c8a0af Mon Sep 17 00:00:00 2001
+From d7d5c6f6ceb4b2ad1643d9a34947e9a88f6e4cb8 Mon Sep 17 00:00:00 2001
 From: dda <dddabtc@users.noreply.github.com>
 Date: Sun, 12 Apr 2026 02:33:01 +0000
-Subject: [PATCH] PERSONAL BUILD: update test expectations for 21600 default
+Subject: [PATCH 10/10] PERSONAL BUILD: update test expectations for 21600 default
 
 ---
  .../openclaw-tools.subagents.sessions-spawn.model.test.ts     | 4 ++--
  1 file changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/src/agents/openclaw-tools.subagents.sessions-spawn.model.test.ts b/src/agents/openclaw-tools.subagents.sessions-spawn.model.test.ts
-index 95032df769..b2063ab521 100644
+index c884e18d..83ffc8ae 100644
 --- a/src/agents/openclaw-tools.subagents.sessions-spawn.model.test.ts
 +++ b/src/agents/openclaw-tools.subagents.sessions-spawn.model.test.ts
-@@ -152,13 +152,13 @@ describe("subagent spawn model + thinking plan", () => {
+@@ -237,13 +237,13 @@ describe("subagent spawn model + thinking plan", () => {
      ).toBe(2);
    });
  
@@ -28,5 +28,5 @@ index 95032df769..b2063ab521 100644
    });
  });
 -- 
-2.34.1
+2.25.1
 

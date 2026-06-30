@@ -1,4 +1,4 @@
-From e98f36551ce45caf93f57c753619edad71d463da Mon Sep 17 00:00:00 2001
+From 42dbca6923c4420dce11ac2975ccf01ae0a682c0 Mon Sep 17 00:00:00 2001
 From: Hermes Cron <hermes@example.invalid>
 Date: Thu, 25 Jun 2026 00:48:09 -0300
 Subject: [PATCH 08/10] fix(cron): raise agent turn safety timeout to 6 hours
@@ -15,7 +15,7 @@ configured agent timeout default.
  1 file changed, 3 insertions(+), 1 deletion(-)
 
 diff --git a/src/cron/service/timeout-policy.ts b/src/cron/service/timeout-policy.ts
-index a949e63561..bcd0b6aa14 100644
+index a949e635..bcd0b6aa 100644
 --- a/src/cron/service/timeout-policy.ts
 +++ b/src/cron/service/timeout-policy.ts
 @@ -12,8 +12,10 @@ export const DEFAULT_JOB_TIMEOUT_MS = 10 * 60_000; // 10 minutes

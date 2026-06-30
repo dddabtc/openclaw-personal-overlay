@@ -1,6 +1,6 @@
-From 736a2da1ef02a2de1fda77ecaa44916a4700f19c Mon Sep 17 00:00:00 2001
+From d9f28e889cb8c4ca62eb76cd6f7a92a0941b7bfb Mon Sep 17 00:00:00 2001
 From: Hermes Cron <hermes@example.invalid>
-Date: Thu, 25 Jun 2026 00:46:09 -0300
+Date: Tue, 30 Jun 2026 15:32:49 -0400
 Subject: [PATCH 03/10] feat(exec): add main session policy for exec guard and SSH block
 
 ---
@@ -8,10 +8,10 @@ Subject: [PATCH 03/10] feat(exec): add main session policy for exec guard and SS
  1 file changed, 19 insertions(+)
 
 diff --git a/src/agents/bash-tools.exec-types.ts b/src/agents/bash-tools.exec-types.ts
-index 7cb4cc8cfe..4dfb6ba6e1 100644
+index 6301d29a..b0dc5532 100644
 --- a/src/agents/bash-tools.exec-types.ts
 +++ b/src/agents/bash-tools.exec-types.ts
-@@ -19,6 +19,23 @@ import type { BashSandboxConfig } from "./bash-tools.shared.js";
+@@ -20,6 +20,23 @@ import type { BashSandboxConfig } from "./bash-tools.shared.js";
  import type { EmbeddedFullAccessBlockedReason } from "./embedded-agent-runner/types.js";
  import type { ExecReviewerConfig } from "./exec-auto-reviewer.js";
  
@@ -35,8 +35,8 @@ index 7cb4cc8cfe..4dfb6ba6e1 100644
  /** Runtime defaults passed into exec/process tool factories. */
  export type ExecToolDefaults = {
    hasCronTool?: boolean;
-@@ -74,6 +91,8 @@ export type ExecToolDefaults = {
-   accountId?: string;
+@@ -78,6 +95,8 @@ export type ExecToolDefaults = {
+   approvalReviewerDeviceId?: string;
    notifyOnExit?: boolean;
    notifyOnExitEmptySuccess?: boolean;
 +  /** PERSONAL BUILD: Main session execution policy. */

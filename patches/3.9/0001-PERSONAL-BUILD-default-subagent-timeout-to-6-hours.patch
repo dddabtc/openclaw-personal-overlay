@@ -1,4 +1,4 @@
-From ea50183b16c269bbbae0b6bcf485ae8a90277e40 Mon Sep 17 00:00:00 2001
+From 55ae85975dc12660867e1f54bcfd77f77fcb4ccd Mon Sep 17 00:00:00 2001
 From: dda <dda@example.com>
 Date: Wed, 8 Apr 2026 09:23:08 +0000
 Subject: [PATCH 01/10] PERSONAL BUILD: default subagent timeout to 6 hours
@@ -8,10 +8,10 @@ Subject: [PATCH 01/10] PERSONAL BUILD: default subagent timeout to 6 hours
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/src/agents/subagent-spawn-plan.ts b/src/agents/subagent-spawn-plan.ts
-index 4ee911a..9b433cf 100644
+index cb8fa493..7a050d78 100644
 --- a/src/agents/subagent-spawn-plan.ts
 +++ b/src/agents/subagent-spawn-plan.ts
-@@ -30,7 +30,7 @@ export function resolveConfiguredSubagentRunTimeoutSeconds(params: {
+@@ -44,7 +44,7 @@ export function resolveConfiguredSubagentRunTimeoutSeconds(params: {
      typeof params.cfg?.agents?.defaults?.subagents?.runTimeoutSeconds === "number" &&
      Number.isFinite(params.cfg.agents.defaults.subagents.runTimeoutSeconds)
        ? Math.max(0, Math.floor(params.cfg.agents.defaults.subagents.runTimeoutSeconds))
@@ -21,5 +21,5 @@ index 4ee911a..9b433cf 100644
      ? Math.max(0, Math.floor(params.runTimeoutSeconds))
      : cfgSubagentTimeout;
 -- 
-2.34.1
+2.25.1
 

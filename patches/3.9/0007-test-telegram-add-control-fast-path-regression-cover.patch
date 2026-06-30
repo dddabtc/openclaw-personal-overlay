@@ -1,18 +1,17 @@
-From 1f0a5cf6a27959109fca98120e050d4d4f6c612a Mon Sep 17 00:00:00 2001
+From 02c5c88d4813e8de9312e10f3116a76e156ad12f Mon Sep 17 00:00:00 2001
 From: dda <dddabtc@users.noreply.github.com>
 Date: Tue, 14 Apr 2026 20:34:32 +0000
-Subject: [PATCH 07/10] test(telegram): add control fast-path regression
- coverage
+Subject: [PATCH 07/10] test(telegram): add control fast-path regression coverage
 
 ---
  extensions/telegram/src/sequential-key.test.ts | 16 ++++++++++++++++
  1 file changed, 16 insertions(+)
 
 diff --git a/extensions/telegram/src/sequential-key.test.ts b/extensions/telegram/src/sequential-key.test.ts
-index b09efa095e..490ab64199 100644
+index 4bb1ba07..609b13e3 100644
 --- a/extensions/telegram/src/sequential-key.test.ts
 +++ b/extensions/telegram/src/sequential-key.test.ts
-@@ -141,6 +141,22 @@ describe("getTelegramSequentialKey", () => {
+@@ -142,6 +142,22 @@ describe("getTelegramSequentialKey", () => {
        { message: mockMessage({ chat: mockChat({ id: 123 }), text: "/whoami" }) },
        "telegram:123:control",
      ],

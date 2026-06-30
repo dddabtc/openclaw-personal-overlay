@@ -1,18 +1,17 @@
-From ed7f721be2ec5b2aac3036b7058d2848449c58e4 Mon Sep 17 00:00:00 2001
+From fa76d9e479c6bc80ad3902aa27e9238b02716bb0 Mon Sep 17 00:00:00 2001
 From: dda <dddabtc@users.noreply.github.com>
 Date: Wed, 20 May 2026 08:46:05 -0300
-Subject: [PATCH 05/10] feat: slash commands bypass session queue (fast-path
- control)
+Subject: [PATCH 05/10] feat: slash commands bypass session queue (fast-path control)
 
 ---
  extensions/telegram/src/sequential-key.ts | 21 ++++++++++++++++++++-
  1 file changed, 20 insertions(+), 1 deletion(-)
 
 diff --git a/extensions/telegram/src/sequential-key.ts b/extensions/telegram/src/sequential-key.ts
-index 6f5e1495c2..d4afb417ba 100644
+index 6fd5c7e9..df717363 100644
 --- a/extensions/telegram/src/sequential-key.ts
 +++ b/extensions/telegram/src/sequential-key.ts
-@@ -5,6 +5,7 @@ import {
+@@ -6,6 +6,7 @@ import {
    maybeResolveTextAlias,
    normalizeCommandBody,
  } from "openclaw/plugin-sdk/command-auth-native";
@@ -20,7 +19,7 @@ index 6f5e1495c2..d4afb417ba 100644
  import {
    isAbortRequestText,
    isBtwRequestText,
-@@ -21,6 +22,8 @@ const TELEGRAM_READ_ONLY_STATUS_COMMAND_KEYS = new Set([
+@@ -25,6 +26,8 @@ const TELEGRAM_READ_ONLY_STATUS_COMMAND_KEYS = new Set([
    "whoami",
  ]);
  
@@ -29,7 +28,7 @@ index 6f5e1495c2..d4afb417ba 100644
  type TelegramSequentialKeyContext = {
    chat?: { id?: number };
    me?: UserFromGetMe;
-@@ -91,7 +94,23 @@ export function isTelegramControlLaneText(params: {
+@@ -95,7 +98,23 @@ export function isTelegramControlLaneText(params: {
    if (isTelegramTargetedStopCommand(params.rawText, params.botUsername)) {
      return true;
    }
